@@ -1,0 +1,5 @@
+F:\gradle-8.7
+F:\AndroidSDK
+
+F:\AndroidSDK\jdk-11.0.28
+F:\AndroidSDK\jdk-17.0.12
