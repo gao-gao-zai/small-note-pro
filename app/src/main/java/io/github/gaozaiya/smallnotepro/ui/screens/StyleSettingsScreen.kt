@@ -76,6 +76,15 @@ private enum class FocusMode {
     TextAlpha,
 }
 
+private enum class SettingsPage {
+    Home,
+    ReadingUi,
+    Interaction,
+    PasswordAndDecoy,
+    ReadingStyle,
+    UiColors,
+}
+
 private val SettingsContentMaxWidth = 420.dp
 private const val SliderWidthFraction = 1f
 
@@ -99,6 +108,7 @@ fun StyleSettingsScreen(
     val view = LocalView.current
 
     var focusMode by rememberSaveable { mutableStateOf(FocusMode.None) }
+    var page by rememberSaveable { mutableStateOf(SettingsPage.Home) }
     val scrollState = rememberScrollState()
     val isFocusing = focusMode != FocusMode.None
     val otherAlpha = if (isFocusing) 0f else 1f
@@ -193,7 +203,15 @@ fun StyleSettingsScreen(
                 .alpha(otherAlpha),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconButton(onClick = onBack) {
+            IconButton(
+                onClick = {
+                    if (page != SettingsPage.Home) {
+                        page = SettingsPage.Home
+                    } else {
+                        onBack()
+                    }
+                },
+            ) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
                     contentDescription = "Back",
@@ -208,214 +226,364 @@ fun StyleSettingsScreen(
             )
         }
 
-        SettingsCategoryCard(
-            title = "阅读界面",
-            style = style,
-            modifier = otherModifier,
-        ) {
-            LabeledSwitch(
-                title = "显示文件名",
-                checked = uiState.showFileName,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onCheckedChange = { readerViewModel.setShowFileName(it) },
-            )
-
-            LabeledSwitch(
-                title = "显示文件编码",
-                checked = uiState.showCharset,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onCheckedChange = { readerViewModel.setShowCharset(it) },
-            )
-
-            LabeledSwitch(
-                title = "单击切换隐藏文本",
-                checked = uiState.tapToToggleHidden,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onCheckedChange = { readerViewModel.setTapToToggleHidden(it) },
-            )
-
-            LabeledSwitch(
-                title = "进入应用自动隐藏文本",
-                checked = uiState.autoHideTextOnEnter,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onCheckedChange = { readerViewModel.setAutoHideTextOnEnter(it) },
-            )
-
-            LabeledSwitch(
-                title = "隐藏文本时隐藏提示",
-                checked = uiState.hideHintWhenHidden,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onCheckedChange = { readerViewModel.setHideHintWhenHidden(it) },
-            )
-
-            LabeledSwitch(
-                title = "隐藏状态栏",
-                checked = uiState.hideStatusBar,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onCheckedChange = { readerViewModel.setHideStatusBar(it) },
-            )
-
-            LabeledSwitch(
-                title = "隐藏导航栏",
-                checked = uiState.hideNavigationBar,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onCheckedChange = { readerViewModel.setHideNavigationBar(it) },
-            )
-        }
-
-        SettingsCategoryCard(
-            title = "交互",
-            style = style,
-            modifier = otherModifier,
-        ) {
-            LabeledIntSlider(
-                title = "长按判定时间(ms)",
-                value = uiState.longPressTimeoutMs,
-                valueRange = 50..5_000,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onValueChange = { readerViewModel.setLongPressTimeoutMs(it) },
-            )
-        }
-
-        var decoyText by rememberSaveable(uiState.decoyText) { mutableStateOf(uiState.decoyText) }
-        var decoyName by rememberSaveable(uiState.decoyDisplayName) { mutableStateOf(uiState.decoyDisplayName ?: "") }
-        var decoyCharset by rememberSaveable(uiState.decoyCharsetName) { mutableStateOf(uiState.decoyCharsetName ?: "") }
-
-        SettingsCategoryCard(
-            title = "密码与诱饵",
-            style = style,
-            modifier = otherModifier,
-        ) {
-            TextButton(
-                onClick = { showFavoritesManagerDialog = true },
-            ) {
-                Text(text = "管理收藏列表", color = style.uiOnSurfaceColor)
-            }
-
-            TextButton(
-                onClick = { showDecoyFavoritesManagerDialog = true },
-            ) {
-                Text(text = "管理假收藏列表", color = style.uiOnSurfaceColor)
-            }
-
-            PasswordSettingRow(
-                title = "显示文本密码",
-                currentIsSet = !uiState.revealPasswordHash.isNullOrBlank(),
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onSetPassword = { readerViewModel.setRevealPassword(it) },
-                onClearPassword = { readerViewModel.clearRevealPassword() },
-            )
-
-            PasswordSettingRow(
-                title = "假密码",
-                currentIsSet = !uiState.fakePasswordHash.isNullOrBlank(),
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onSetPassword = {
-                    if (uiState.revealPasswordHash.isNullOrBlank()) {
-                        showFakePasswordNeedRealDialog = true
-                    } else {
-                        readerViewModel.setFakePassword(it)
+        when (page) {
+            SettingsPage.Home -> {
+                SettingsCategoryCard(
+                    title = "目录",
+                    style = style,
+                    modifier = otherModifier,
+                ) {
+                    TextButton(onClick = { page = SettingsPage.ReadingUi }) {
+                        Text(text = "阅读界面", color = style.uiOnSurfaceColor)
                     }
-                },
-                onClearPassword = { readerViewModel.clearFakePassword() },
-            )
+                    TextButton(onClick = { page = SettingsPage.Interaction }) {
+                        Text(text = "交互", color = style.uiOnSurfaceColor)
+                    }
+                    TextButton(onClick = { page = SettingsPage.PasswordAndDecoy }) {
+                        Text(text = "密码与诱饵", color = style.uiOnSurfaceColor)
+                    }
+                    TextButton(onClick = { page = SettingsPage.ReadingStyle }) {
+                        Text(text = "阅读样式", color = style.uiOnSurfaceColor)
+                    }
+                    TextButton(onClick = { page = SettingsPage.UiColors }) {
+                        Text(text = "UI 配色", color = style.uiOnSurfaceColor)
+                    }
+                }
 
-            OutlinedTextField(
-                modifier = Modifier.fillMaxWidth(),
-                value = decoyText,
-                onValueChange = { decoyText = it },
-                label = { Text(text = "诱饵文本") },
-                minLines = 3,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = style.uiAccentColor,
-                    focusedLabelColor = style.uiAccentColor,
-                    cursorColor = style.uiAccentColor,
-                    focusedTextColor = style.uiOnSurfaceColor,
-                    unfocusedTextColor = style.uiOnSurfaceColor,
-                ),
-            )
+                SettingsCategoryCard(
+                    title = "文字透明度(顶层)",
+                    style = style,
+                ) {
+                    LabeledSwitch(
+                        title = "顶层显示透明度滑条",
+                        checked = uiState.showTextAlphaOnSettingsHome,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setShowTextAlphaOnSettingsHome(it) },
+                    )
 
-            TextButton(
-                onClick = { readerViewModel.setDecoyText(decoyText) },
-            ) {
-                Text(text = "保存诱饵文本", color = style.uiOnSurfaceColor)
+                    if (uiState.showTextAlphaOnSettingsHome) {
+                        FocusSlider(
+                            title = "文字透明度",
+                            value = style.textAlpha.coerceIn(0f, 1f),
+                            valueRange = 0f..1f,
+                            labelColor = style.uiOnSurfaceColor,
+                            accentColor = style.uiAccentColor,
+                            onValueChange = {
+                                if (focusMode == FocusMode.None) focusMode = FocusMode.TextAlpha
+                                readerViewModel.setStyle(style.copy(textAlpha = it.coerceIn(0f, 1f)))
+                            },
+                            onValueChangeFinished = { focusMode = FocusMode.None },
+                        )
+                    }
+                }
             }
 
-            OutlinedTextField(
-                modifier = Modifier.fillMaxWidth(),
-                value = decoyName,
-                onValueChange = { decoyName = it },
-                label = { Text(text = "诱饵文件名(留空则隐藏)") },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = style.uiAccentColor,
-                    focusedLabelColor = style.uiAccentColor,
-                    cursorColor = style.uiAccentColor,
-                    focusedTextColor = style.uiOnSurfaceColor,
-                    unfocusedTextColor = style.uiOnSurfaceColor,
-                ),
-            )
+            SettingsPage.ReadingUi -> {
+                SettingsCategoryCard(
+                    title = "阅读界面",
+                    style = style,
+                    modifier = otherModifier,
+                ) {
+                    LabeledSwitch(
+                        title = "显示文件名",
+                        checked = uiState.showFileName,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setShowFileName(it) },
+                    )
 
-            TextButton(
-                onClick = { readerViewModel.setDecoyDisplayName(decoyName.takeIf { it.isNotBlank() }) },
-            ) {
-                Text(text = "保存诱饵文件名", color = style.uiOnSurfaceColor)
+                    LabeledSwitch(
+                        title = "显示文件编码",
+                        checked = uiState.showCharset,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setShowCharset(it) },
+                    )
+
+                    LabeledSwitch(
+                        title = "单击切换隐藏文本",
+                        checked = uiState.tapToToggleHidden,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setTapToToggleHidden(it) },
+                    )
+
+                    LabeledSwitch(
+                        title = "进入应用自动隐藏文本",
+                        checked = uiState.autoHideTextOnEnter,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setAutoHideTextOnEnter(it) },
+                    )
+
+                    LabeledSwitch(
+                        title = "隐藏文本时隐藏提示",
+                        checked = uiState.hideHintWhenHidden,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setHideHintWhenHidden(it) },
+                    )
+
+                    LabeledSwitch(
+                        title = "隐藏状态栏",
+                        checked = uiState.hideStatusBar,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setHideStatusBar(it) },
+                    )
+
+                    LabeledSwitch(
+                        title = "隐藏导航栏",
+                        checked = uiState.hideNavigationBar,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setHideNavigationBar(it) },
+                    )
+                }
             }
 
-            OutlinedTextField(
-                modifier = Modifier.fillMaxWidth(),
-                value = decoyCharset,
-                onValueChange = { decoyCharset = it },
-                label = { Text(text = "诱饵编码(留空则隐藏)") },
-                singleLine = true,
-                colors = OutlinedTextFieldDefaults.colors(
-                    focusedBorderColor = style.uiAccentColor,
-                    focusedLabelColor = style.uiAccentColor,
-                    cursorColor = style.uiAccentColor,
-                    focusedTextColor = style.uiOnSurfaceColor,
-                    unfocusedTextColor = style.uiOnSurfaceColor,
-                ),
-            )
-
-            TextButton(
-                onClick = { readerViewModel.setDecoyCharsetName(decoyCharset.takeIf { it.isNotBlank() }) },
-            ) {
-                Text(text = "保存诱饵编码", color = style.uiOnSurfaceColor)
+            SettingsPage.Interaction -> {
+                SettingsCategoryCard(
+                    title = "交互",
+                    style = style,
+                    modifier = otherModifier,
+                ) {
+                    LabeledIntSlider(
+                        title = "长按判定时间(ms)",
+                        value = uiState.longPressTimeoutMs,
+                        valueRange = 50..5_000,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onValueChange = { readerViewModel.setLongPressTimeoutMs(it) },
+                    )
+                }
             }
 
-            LabeledSwitch(
-                title = "诱饵模式隐藏设置入口",
-                checked = uiState.decoyHideSettings,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onCheckedChange = { readerViewModel.setDecoyHideSettings(it) },
-            )
+            SettingsPage.PasswordAndDecoy -> {
+                var decoyText by rememberSaveable(uiState.decoyText) { mutableStateOf(uiState.decoyText) }
+                var decoyName by rememberSaveable(uiState.decoyDisplayName) { mutableStateOf(uiState.decoyDisplayName ?: "") }
+                var decoyCharset by rememberSaveable(uiState.decoyCharsetName) { mutableStateOf(uiState.decoyCharsetName ?: "") }
 
-            LabeledSwitch(
-                title = "诱饵模式隐藏选择文件",
-                checked = uiState.decoyHidePickFile,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onCheckedChange = { readerViewModel.setDecoyHidePickFile(it) },
-            )
+                SettingsCategoryCard(
+                    title = "密码与诱饵",
+                    style = style,
+                    modifier = otherModifier,
+                ) {
+                    TextButton(
+                        onClick = { showFavoritesManagerDialog = true },
+                    ) {
+                        Text(text = "管理收藏列表", color = style.uiOnSurfaceColor)
+                    }
 
-            LabeledSwitch(
-                title = "诱饵模式隐藏收藏列表",
-                checked = uiState.decoyHideFavoritesList,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onCheckedChange = { readerViewModel.setDecoyHideFavoritesList(it) },
-            )
+                    TextButton(
+                        onClick = { showDecoyFavoritesManagerDialog = true },
+                    ) {
+                        Text(text = "管理假收藏列表", color = style.uiOnSurfaceColor)
+                    }
+
+                    PasswordSettingRow(
+                        title = "显示文本密码",
+                        currentIsSet = !uiState.revealPasswordHash.isNullOrBlank(),
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onSetPassword = { readerViewModel.setRevealPassword(it) },
+                        onClearPassword = { readerViewModel.clearRevealPassword() },
+                    )
+
+                    PasswordSettingRow(
+                        title = "假密码",
+                        currentIsSet = !uiState.fakePasswordHash.isNullOrBlank(),
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onSetPassword = {
+                            if (uiState.revealPasswordHash.isNullOrBlank()) {
+                                showFakePasswordNeedRealDialog = true
+                            } else {
+                                readerViewModel.setFakePassword(it)
+                            }
+                        },
+                        onClearPassword = { readerViewModel.clearFakePassword() },
+                    )
+
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = decoyText,
+                        onValueChange = { decoyText = it },
+                        label = { Text(text = "诱饵文本") },
+                        minLines = 3,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = style.uiAccentColor,
+                            focusedLabelColor = style.uiAccentColor,
+                            cursorColor = style.uiAccentColor,
+                            focusedTextColor = style.uiOnSurfaceColor,
+                            unfocusedTextColor = style.uiOnSurfaceColor,
+                        ),
+                    )
+
+                    TextButton(
+                        onClick = { readerViewModel.setDecoyText(decoyText) },
+                    ) {
+                        Text(text = "保存诱饵文本", color = style.uiOnSurfaceColor)
+                    }
+
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = decoyName,
+                        onValueChange = { decoyName = it },
+                        label = { Text(text = "诱饵文件名(留空则隐藏)") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = style.uiAccentColor,
+                            focusedLabelColor = style.uiAccentColor,
+                            cursorColor = style.uiAccentColor,
+                            focusedTextColor = style.uiOnSurfaceColor,
+                            unfocusedTextColor = style.uiOnSurfaceColor,
+                        ),
+                    )
+
+                    TextButton(
+                        onClick = { readerViewModel.setDecoyDisplayName(decoyName.takeIf { it.isNotBlank() }) },
+                    ) {
+                        Text(text = "保存诱饵文件名", color = style.uiOnSurfaceColor)
+                    }
+
+                    OutlinedTextField(
+                        modifier = Modifier.fillMaxWidth(),
+                        value = decoyCharset,
+                        onValueChange = { decoyCharset = it },
+                        label = { Text(text = "诱饵编码(留空则隐藏)") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = style.uiAccentColor,
+                            focusedLabelColor = style.uiAccentColor,
+                            cursorColor = style.uiAccentColor,
+                            focusedTextColor = style.uiOnSurfaceColor,
+                            unfocusedTextColor = style.uiOnSurfaceColor,
+                        ),
+                    )
+
+                    TextButton(
+                        onClick = { readerViewModel.setDecoyCharsetName(decoyCharset.takeIf { it.isNotBlank() }) },
+                    ) {
+                        Text(text = "保存诱饵编码", color = style.uiOnSurfaceColor)
+                    }
+
+                    LabeledSwitch(
+                        title = "诱饵模式隐藏设置入口",
+                        checked = uiState.decoyHideSettings,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setDecoyHideSettings(it) },
+                    )
+
+                    LabeledSwitch(
+                        title = "诱饵模式隐藏选择文件",
+                        checked = uiState.decoyHidePickFile,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setDecoyHidePickFile(it) },
+                    )
+
+                    LabeledSwitch(
+                        title = "诱饵模式隐藏收藏列表",
+                        checked = uiState.decoyHideFavoritesList,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onCheckedChange = { readerViewModel.setDecoyHideFavoritesList(it) },
+                    )
+                }
+            }
+
+            SettingsPage.ReadingStyle -> {
+                SettingsCategoryCard(
+                    title = "阅读样式",
+                    style = style,
+                    titleModifier = Modifier.alpha(otherAlpha),
+                    containerColor = if (isFocusing) Color.Transparent else style.uiSurfaceColor,
+                    elevation = CardDefaults.cardElevation(defaultElevation = if (isFocusing) 0.dp else 1.dp),
+                ) {
+                    Column(modifier = otherModifier) {
+                        ColorPicker(
+                            title = "文字颜色",
+                            color = style.textColor,
+                            labelColor = style.uiOnSurfaceColor,
+                            accentColor = style.uiAccentColor,
+                            onColorChange = { readerViewModel.setStyle(style.copy(textColor = it)) },
+                        )
+                    }
+
+                    FocusSlider(
+                        modifier = Modifier.alpha(if (focusMode == FocusMode.TextAlpha) 0f else 1f),
+                        title = "文字亮度",
+                        value = style.textBrightness,
+                        valueRange = 0f..2f,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onValueChange = {
+                            if (focusMode == FocusMode.None) focusMode = FocusMode.TextBrightness
+                            readerViewModel.setStyle(style.copy(textBrightness = it))
+                        },
+                        onValueChangeFinished = { focusMode = FocusMode.None },
+                    )
+
+                    FocusSlider(
+                        modifier = Modifier.alpha(if (focusMode == FocusMode.TextBrightness) 0f else 1f),
+                        title = "文字透明度",
+                        value = style.textAlpha.coerceIn(0f, 1f),
+                        valueRange = 0f..1f,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onValueChange = {
+                            if (focusMode == FocusMode.None) focusMode = FocusMode.TextAlpha
+                            readerViewModel.setStyle(style.copy(textAlpha = it.coerceIn(0f, 1f)))
+                        },
+                        onValueChangeFinished = { focusMode = FocusMode.None },
+                    )
+
+                    LabeledSlider(
+                        title = "字号",
+                        value = style.fontSizeSp,
+                        valueRange = 10f..28f,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onValueChange = { readerViewModel.setStyle(style.copy(fontSizeSp = it)) },
+                        modifier = otherModifier,
+                    )
+                }
+            }
+
+            SettingsPage.UiColors -> {
+                SettingsCategoryCard(
+                    title = "UI 配色",
+                    style = style,
+                    modifier = otherModifier,
+                ) {
+                    ColorPicker(
+                        title = "菜单/对话框背景",
+                        color = style.uiSurfaceColor,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onColorChange = { readerViewModel.setStyle(style.copy(uiSurfaceColor = it)) },
+                    )
+
+                    ColorPicker(
+                        title = "UI 文字颜色",
+                        color = style.uiOnSurfaceColor,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onColorChange = { readerViewModel.setStyle(style.copy(uiOnSurfaceColor = it)) },
+                    )
+
+                    ColorPicker(
+                        title = "强调色(按钮/滑杆)",
+                        color = style.uiAccentColor,
+                        labelColor = style.uiOnSurfaceColor,
+                        accentColor = style.uiAccentColor,
+                        onColorChange = { readerViewModel.setStyle(style.copy(uiAccentColor = it)) },
+                    )
+                }
+            }
         }
 
         if (showFavoritesManagerDialog) {
@@ -511,92 +679,6 @@ fun StyleSettingsScreen(
                 },
             )
         }
-        SettingsCategoryCard(
-            title = "阅读样式",
-            style = style,
-            titleModifier = Modifier.alpha(otherAlpha),
-            containerColor = if (isFocusing) Color.Transparent else style.uiSurfaceColor,
-            elevation = CardDefaults.cardElevation(defaultElevation = if (isFocusing) 0.dp else 1.dp),
-        ) {
-            Column(modifier = otherModifier) {
-                ColorPicker(
-                    title = "文字颜色",
-                    color = style.textColor,
-                    labelColor = style.uiOnSurfaceColor,
-                    accentColor = style.uiAccentColor,
-                    onColorChange = { readerViewModel.setStyle(style.copy(textColor = it)) },
-                )
-            }
-
-            FocusSlider(
-                modifier = Modifier.alpha(if (focusMode == FocusMode.TextAlpha) 0f else 1f),
-                title = "文字亮度",
-                value = style.textBrightness,
-                valueRange = 0f..2f,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onValueChange = {
-                    if (focusMode == FocusMode.None) focusMode = FocusMode.TextBrightness
-                    readerViewModel.setStyle(style.copy(textBrightness = it))
-                },
-                onValueChangeFinished = { focusMode = FocusMode.None },
-            )
-
-            FocusSlider(
-                modifier = Modifier.alpha(if (focusMode == FocusMode.TextBrightness) 0f else 1f),
-                title = "文字透明度",
-                value = style.textAlpha.coerceIn(0f, 1f),
-                valueRange = 0f..1f,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onValueChange = {
-                    if (focusMode == FocusMode.None) focusMode = FocusMode.TextAlpha
-                    readerViewModel.setStyle(style.copy(textAlpha = it.coerceIn(0f, 1f)))
-                },
-                onValueChangeFinished = { focusMode = FocusMode.None },
-            )
-
-            LabeledSlider(
-                title = "字号",
-                value = style.fontSizeSp,
-                valueRange = 10f..28f,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onValueChange = { readerViewModel.setStyle(style.copy(fontSizeSp = it)) },
-                modifier = otherModifier,
-            )
-        }
-
-        SettingsCategoryCard(
-            title = "UI 配色",
-            style = style,
-            modifier = otherModifier,
-        ) {
-            ColorPicker(
-                title = "菜单/对话框背景",
-                color = style.uiSurfaceColor,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onColorChange = { readerViewModel.setStyle(style.copy(uiSurfaceColor = it)) },
-            )
-
-            ColorPicker(
-                title = "UI 文字颜色",
-                color = style.uiOnSurfaceColor,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onColorChange = { readerViewModel.setStyle(style.copy(uiOnSurfaceColor = it)) },
-            )
-
-            ColorPicker(
-                title = "强调色(按钮/滑杆)",
-                color = style.uiAccentColor,
-                labelColor = style.uiOnSurfaceColor,
-                accentColor = style.uiAccentColor,
-                onColorChange = { readerViewModel.setStyle(style.copy(uiAccentColor = it)) },
-            )
-        }
-
         if (showFakePasswordNeedRealDialog) {
             AlertDialog(
                 onDismissRequest = { showFakePasswordNeedRealDialog = false },

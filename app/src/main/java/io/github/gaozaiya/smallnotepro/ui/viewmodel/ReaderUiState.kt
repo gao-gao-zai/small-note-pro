@@ -24,6 +24,7 @@ data class ReaderUiState(
     val hideHintWhenHidden: Boolean = false,
     val hideStatusBar: Boolean = false,
     val hideNavigationBar: Boolean = false,
+    val showTextAlphaOnSettingsHome: Boolean = false,
     val longPressTimeoutMs: Int = 600,
     val revealPasswordHash: String? = null,
     val fakePasswordHash: String? = null,

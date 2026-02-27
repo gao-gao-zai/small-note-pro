@@ -79,6 +79,7 @@ class ReaderViewModel(
                 hideHintWhenHidden = false,
                 hideStatusBar = false,
                 hideNavigationBar = false,
+                showTextAlphaOnSettingsHome = false,
                 longPressTimeoutMs = 600,
                 revealPasswordHash = null,
                 fakePasswordHash = null,
@@ -269,6 +270,7 @@ class ReaderViewModel(
                 hideHintWhenHidden = false,
                 hideStatusBar = false,
                 hideNavigationBar = false,
+                showTextAlphaOnSettingsHome = false,
                 longPressTimeoutMs = 600,
                 revealPasswordHash = null,
                 fakePasswordHash = null,
@@ -308,6 +310,7 @@ class ReaderViewModel(
             hideHintWhenHidden = display.prefs.hideHintWhenHidden,
             hideStatusBar = display.prefs.hideStatusBar,
             hideNavigationBar = display.prefs.hideNavigationBar,
+            showTextAlphaOnSettingsHome = display.prefs.showTextAlphaOnSettingsHome,
             longPressTimeoutMs = display.prefs.longPressTimeoutMs,
             revealPasswordHash = display.prefs.revealPasswordHash,
             fakePasswordHash = display.prefs.fakePasswordHash,
@@ -509,6 +512,12 @@ class ReaderViewModel(
     fun setHideNavigationBar(enabled: Boolean) {
         viewModelScope.launch {
             preferencesRepository.setHideNavigationBar(enabled)
+        }
+    }
+
+    fun setShowTextAlphaOnSettingsHome(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setShowTextAlphaOnSettingsHome(enabled)
         }
     }
 

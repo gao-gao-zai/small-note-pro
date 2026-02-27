@@ -30,6 +30,7 @@ data class ReaderGlobalPreferences(
     val hideHintWhenHidden: Boolean,
     val hideStatusBar: Boolean,
     val hideNavigationBar: Boolean,
+    val showTextAlphaOnSettingsHome: Boolean,
     val longPressTimeoutMs: Int,
     val revealPasswordHash: String?,
     val fakePasswordHash: String?,
@@ -53,6 +54,8 @@ class ReaderPreferencesRepository(
     private val hideHintWhenHiddenKey = booleanPreferencesKey("hide_hint_when_hidden")
     private val hideStatusBarKey = booleanPreferencesKey("hide_status_bar")
     private val hideNavigationBarKey = booleanPreferencesKey("hide_navigation_bar")
+
+    private val showTextAlphaOnSettingsHomeKey = booleanPreferencesKey("show_text_alpha_on_settings_home")
 
     private val longPressTimeoutMsKey = intPreferencesKey("long_press_timeout_ms")
     private val revealPasswordHashKey = stringPreferencesKey("reveal_password_hash")
@@ -83,6 +86,7 @@ class ReaderPreferencesRepository(
             hideHintWhenHidden = preferences[hideHintWhenHiddenKey] ?: false,
             hideStatusBar = preferences[hideStatusBarKey] ?: false,
             hideNavigationBar = preferences[hideNavigationBarKey] ?: false,
+            showTextAlphaOnSettingsHome = preferences[showTextAlphaOnSettingsHomeKey] ?: false,
             longPressTimeoutMs = (preferences[longPressTimeoutMsKey] ?: 600).coerceIn(50, 5_000),
             revealPasswordHash = preferences[revealPasswordHashKey],
             fakePasswordHash = preferences[fakePasswordHashKey],
@@ -168,6 +172,12 @@ class ReaderPreferencesRepository(
     suspend fun setHideNavigationBar(enabled: Boolean) {
         appContext.appDataStore.edit { preferences ->
             preferences[hideNavigationBarKey] = enabled
+        }
+    }
+
+    suspend fun setShowTextAlphaOnSettingsHome(enabled: Boolean) {
+        appContext.appDataStore.edit { preferences ->
+            preferences[showTextAlphaOnSettingsHomeKey] = enabled
         }
     }
 

@@ -12,7 +12,16 @@ android {
         minSdk = 30
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0.0"
+        versionName = "0.1.0"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("../app/keystore/my-release-key.jks")
+            storePassword = System.getenv("KEYSTORE_PASSWORD") ?: "123456"
+            keyAlias = "my-key-alias"
+            keyPassword = System.getenv("KEY_PASSWORD") ?: "123456"
+        }
     }
 
     buildTypes {
@@ -20,6 +29,7 @@ android {
             isMinifyEnabled = false
         }
         release {
+            signingConfig = signingConfigs.getByName("release")
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(
