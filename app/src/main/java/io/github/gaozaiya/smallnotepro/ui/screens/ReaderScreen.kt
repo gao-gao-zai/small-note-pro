@@ -5,7 +5,9 @@ import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -61,6 +63,7 @@ import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
@@ -78,6 +81,7 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
 /**
@@ -122,8 +126,22 @@ fun ReaderScreen(
     var showSpanDialog by rememberSaveable { mutableStateOf(false) }
     var showEnableMarkdownDialog by rememberSaveable { mutableStateOf(false) }
 
+    var showRevealPasswordDialog by rememberSaveable { mutableStateOf(false) }
+    var revealPasswordInput by rememberSaveable { mutableStateOf("") }
+    var revealPasswordError by rememberSaveable { mutableStateOf<String?>(null) }
+
     val background = uiState.style.backgroundColor
     val baseTextColor = ColorUtils.applyBrightness(uiState.style.textColor, uiState.style.textBrightness)
+
+    val isDecoyMode = uiState.decoyModeEnabled
+    val effectiveContent = if (isDecoyMode) uiState.decoyText else uiState.content
+    val effectiveDisplayName = if (isDecoyMode) uiState.decoyDisplayName else uiState.displayName
+    val effectiveCharsetName = if (isDecoyMode) uiState.decoyCharsetName else uiState.detectedCharsetName
+    val effectiveShowFileName = if (isDecoyMode) !effectiveDisplayName.isNullOrBlank() else uiState.showFileName
+    val effectiveShowCharset = if (isDecoyMode) !effectiveCharsetName.isNullOrBlank() else uiState.showCharset
+    val effectiveErrorMessage = if (isDecoyMode) null else uiState.errorMessage
+    val effectiveIsBigFileMode = uiState.isBigFileMode && !isDecoyMode
+    val effectiveIsMarkdown = uiState.isMarkdown && !isDecoyMode
 
     val scrollState = rememberScrollState()
     var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
@@ -228,9 +246,10 @@ fun ReaderScreen(
 
     LaunchedEffect(uiState.currentUri, uiState.isMarkdown, uiState.progressOffsetChar, textLayoutResult) {
         if (uiState.isBigFileMode) return@LaunchedEffect
+        if (isDecoyMode) return@LaunchedEffect
         if (hasRestoredProgress) return@LaunchedEffect
         val layout = textLayoutResult ?: return@LaunchedEffect
-        if (uiState.content.isBlank()) return@LaunchedEffect
+        if (effectiveContent.isBlank()) return@LaunchedEffect
 
         val targetOffset = uiState.progressOffsetChar.coerceIn(0, layout.layoutInput.text.length)
         val line = layout.getLineForOffset(targetOffset)
@@ -241,8 +260,9 @@ fun ReaderScreen(
 
     LaunchedEffect(uiState.currentUri, uiState.isMarkdown, uiState.content, textLayoutResult) {
         if (uiState.isBigFileMode) return@LaunchedEffect
+        if (isDecoyMode) return@LaunchedEffect
         if (uiState.currentUri == null) return@LaunchedEffect
-        if (uiState.content.isBlank()) return@LaunchedEffect
+        if (effectiveContent.isBlank()) return@LaunchedEffect
         val layout = textLayoutResult ?: return@LaunchedEffect
 
         snapshotFlow { scrollState.value }
@@ -260,32 +280,33 @@ fun ReaderScreen(
     }
 
     val renderedText: AnnotatedString = remember(
-        uiState.content,
+        effectiveContent,
         uiState.style.fontSizeSp,
         baseTextColor,
         uiState.spanOverrides,
-        uiState.isMarkdown,
+        effectiveIsMarkdown,
         uiState.isBigFileMode,
+        isDecoyMode,
     ) {
         if (uiState.isBigFileMode) {
             AnnotatedString("")
-        } else
-        if (uiState.isMarkdown) {
+        } else if (effectiveIsMarkdown) {
             MarkdownRenderer.render(
-                markdown = uiState.content,
+                markdown = effectiveContent,
                 baseFontSizeSp = uiState.style.fontSizeSp,
                 baseColor = baseTextColor,
             )
         } else {
             val base = buildAnnotatedString {
                 withStyle(SpanStyle(fontSize = uiState.style.fontSizeSp.sp, color = baseTextColor)) {
-                    append(uiState.content)
+                    append(effectiveContent)
                 }
             }
 
             buildAnnotatedString {
                 append(base)
-                uiState.spanOverrides.forEach { override ->
+                if (!isDecoyMode) {
+                    uiState.spanOverrides.forEach { override ->
                     val spanColor = override.color?.let { c ->
                         ColorUtils.applyBrightness(c, override.brightness ?: 1f)
                     }
@@ -298,6 +319,7 @@ fun ReaderScreen(
                         start = override.start,
                         end = override.end,
                     )
+                    }
                 }
             }
         }
@@ -311,7 +333,14 @@ fun ReaderScreen(
 
     val onLongPressState = rememberUpdatedState {
         if (uiState.isTextHidden) {
-            readerViewModel.setTextHidden(false)
+            val needPassword = !uiState.revealPasswordHash.isNullOrBlank() || !uiState.fakePasswordHash.isNullOrBlank()
+            if (needPassword) {
+                revealPasswordInput = ""
+                revealPasswordError = null
+                showRevealPasswordDialog = true
+            } else {
+                readerViewModel.setTextHidden(false)
+            }
         } else {
             showMenu = true
         }
@@ -321,11 +350,22 @@ fun ReaderScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(background)
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { onTapState.value() },
-                    onLongPress = { onLongPressState.value() },
-                )
+            .pointerInput(uiState.longPressTimeoutMs) {
+                awaitEachGesture {
+                    val down = awaitFirstDown(requireUnconsumed = false)
+                    val up = withTimeoutOrNull(uiState.longPressTimeoutMs.toLong()) {
+                        waitForUpOrCancellation()
+                    }
+
+                    if (up != null) {
+                        onTapState.value()
+                    } else {
+                        onLongPressState.value()
+                        waitForUpOrCancellation()
+                    }
+
+                    down.consume()
+                }
             },
     ) {
         Column(
@@ -334,8 +374,8 @@ fun ReaderScreen(
                 .padding(WindowInsets.safeDrawing.asPaddingValues())
                 .padding(8.dp),
         ) {
-            if (uiState.showFileName) {
-                uiState.displayName?.let { name ->
+            if (effectiveShowFileName) {
+                effectiveDisplayName?.let { name ->
                     Text(
                         text = name,
                         color = baseTextColor,
@@ -346,8 +386,8 @@ fun ReaderScreen(
                 }
             }
 
-            if (uiState.showCharset) {
-                uiState.detectedCharsetName?.let { charsetName ->
+            if (effectiveShowCharset) {
+                effectiveCharsetName?.let { charsetName ->
                     Text(
                         text = charsetName,
                         color = baseTextColor,
@@ -358,7 +398,7 @@ fun ReaderScreen(
                 }
             }
 
-            if (uiState.errorMessage != null) {
+            if (effectiveErrorMessage != null) {
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -366,7 +406,7 @@ fun ReaderScreen(
                         .verticalScroll(scrollState),
                 ) {
                     Text(
-                        text = uiState.errorMessage ?: "",
+                        text = effectiveErrorMessage,
                         color = baseTextColor,
                         fontSize = uiState.style.fontSizeSp.sp,
                     )
@@ -395,7 +435,7 @@ fun ReaderScreen(
                     }
                     Spacer(modifier = Modifier.height(24.dp))
                 }
-            } else if (uiState.isBigFileMode) {
+            } else if (effectiveIsBigFileMode) {
                 LazyColumn(
                     state = bigListState,
                     modifier = Modifier
@@ -426,7 +466,7 @@ fun ReaderScreen(
                         Spacer(modifier = Modifier.height(24.dp))
                     }
                 }
-            } else if (uiState.content.isBlank()) {
+            } else if (effectiveContent.isBlank()) {
                 Column(
                     modifier = Modifier
                         .weight(1f)
@@ -499,12 +539,79 @@ fun ReaderScreen(
             )
         }
 
-        if (showSpanDialog && !uiState.isBigFileMode) {
+        if (showSpanDialog && !uiState.isBigFileMode && !uiState.decoyModeEnabled) {
             SpanOverrideDialog(
                 content = uiState.content,
                 uiStyle = uiState.style,
                 onDismiss = { showSpanDialog = false },
                 onAdd = { readerViewModel.addSpanOverride(it) },
+            )
+        }
+
+        if (showRevealPasswordDialog) {
+            AlertDialog(
+                onDismissRequest = {
+                    showRevealPasswordDialog = false
+                },
+                containerColor = uiState.style.uiSurfaceColor,
+                titleContentColor = uiState.style.uiOnSurfaceColor,
+                textContentColor = uiState.style.uiOnSurfaceColor,
+                title = { Text(text = "输入密码") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(
+                            value = revealPasswordInput,
+                            onValueChange = {
+                                revealPasswordInput = it
+                                revealPasswordError = null
+                            },
+                            singleLine = true,
+                            visualTransformation = PasswordVisualTransformation(),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedTextColor = uiState.style.uiOnSurfaceColor,
+                                unfocusedTextColor = uiState.style.uiOnSurfaceColor,
+                                focusedBorderColor = uiState.style.uiAccentColor,
+                                unfocusedBorderColor = uiState.style.uiOnSurfaceColor.copy(alpha = 0.5f),
+                                cursorColor = uiState.style.uiAccentColor,
+                            ),
+                        )
+
+                        if (revealPasswordError != null) {
+                            Text(text = revealPasswordError ?: "", color = uiState.style.uiOnSurfaceColor)
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val decision = readerViewModel.decideRevealPassword(revealPasswordInput)
+                            when (decision) {
+                                ReaderViewModel.RevealDecision.Reveal -> {
+                                    readerViewModel.setDecoyModeEnabled(false)
+                                    readerViewModel.setTextHidden(false)
+                                    showRevealPasswordDialog = false
+                                }
+
+                                ReaderViewModel.RevealDecision.Decoy -> {
+                                    readerViewModel.setDecoyModeEnabled(true)
+                                    readerViewModel.setTextHidden(false)
+                                    showRevealPasswordDialog = false
+                                }
+
+                                ReaderViewModel.RevealDecision.Invalid -> {
+                                    revealPasswordError = "密码错误"
+                                }
+                            }
+                        },
+                    ) {
+                        Text(text = "确定")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showRevealPasswordDialog = false }) {
+                        Text(text = "取消")
+                    }
+                },
             )
         }
 
@@ -571,35 +678,39 @@ private fun ReaderMenuSheet(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onPickFile,
-                colors = buttonColors,
-            ) {
-                Text(text = "选择文件")
+            if (!(uiState.decoyModeEnabled && uiState.decoyHidePickFile)) {
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onPickFile,
+                    colors = buttonColors,
+                ) {
+                    Text(text = "选择文件")
+                }
             }
 
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onToggleFavorite,
-                enabled = uiState.currentUri != null,
+                enabled = uiState.currentUri != null && !uiState.decoyModeEnabled,
                 colors = buttonColors,
             ) {
                 Text(text = if (uiState.isFavorite) "取消收藏" else "收藏")
             }
 
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onOpenFavorites,
-                colors = buttonColors,
-            ) {
-                Text(text = "收藏列表")
+            if (!(uiState.decoyModeEnabled && uiState.decoyHideFavoritesList)) {
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onOpenFavorites,
+                    colors = buttonColors,
+                ) {
+                    Text(text = "收藏列表")
+                }
             }
 
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onOpenSpanDialog,
-                enabled = uiState.content.isNotBlank() && !uiState.isMarkdown && !uiState.isBigFileMode,
+                enabled = uiState.content.isNotBlank() && !uiState.isMarkdown && !uiState.isBigFileMode && !uiState.decoyModeEnabled,
                 colors = buttonColors,
             ) {
                 Text(text = "局部样式")
@@ -608,18 +719,20 @@ private fun ReaderMenuSheet(
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onToggleMarkdown,
-                enabled = uiState.currentUri != null && !uiState.isBigFileMode,
+                enabled = uiState.currentUri != null && !uiState.isBigFileMode && !uiState.decoyModeEnabled,
                 colors = buttonColors,
             ) {
                 Text(text = if (uiState.isMarkdown) "关闭 Markdown 渲染" else "开启 Markdown 渲染")
             }
 
-            Button(
-                modifier = Modifier.fillMaxWidth(),
-                onClick = onOpenStyleSettings,
-                colors = buttonColors,
-            ) {
-                Text(text = "样式设置")
+            if (!(uiState.decoyModeEnabled && uiState.decoyHideSettings)) {
+                Button(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = onOpenStyleSettings,
+                    colors = buttonColors,
+                ) {
+                    Text(text = "设置")
+                }
             }
         }
     }

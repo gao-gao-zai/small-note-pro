@@ -110,11 +110,20 @@ fun FavoritesScreen(
             modifier = Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
-            val favorites = uiState.favorites.toList().sorted()
+            val favorites = if (uiState.decoyModeEnabled) {
+                uiState.decoyFakeFavorites
+            } else {
+                uiState.favorites.toList().sorted()
+            }
             items(favorites) { uriString ->
-                val uri = remember(uriString) { Uri.parse(uriString) }
-                val name = remember(uriString) {
-                    DocumentFile.fromSingleUri(appContext, uri)?.name ?: uri.lastPathSegment ?: uriString
+                val (uri, name) = if (uiState.decoyModeEnabled) {
+                    null to uriString
+                } else {
+                    val u = remember(uriString) { Uri.parse(uriString) }
+                    val n = remember(uriString) {
+                        DocumentFile.fromSingleUri(appContext, u)?.name ?: u.lastPathSegment ?: uriString
+                    }
+                    u to n
                 }
 
                 Row(
@@ -123,8 +132,10 @@ fun FavoritesScreen(
                         .background(style.uiSurfaceColor.copy(alpha = 0.65f))
                         .padding(8.dp)
                         .clickable {
-                            readerViewModel.openUri(uri)
-                            onOpenReader()
+                            if (!uiState.decoyModeEnabled && uri != null) {
+                                readerViewModel.openUri(uri)
+                                onOpenReader()
+                            }
                         },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
@@ -135,8 +146,10 @@ fun FavoritesScreen(
                         modifier = Modifier.weight(1f),
                         maxLines = 2,
                     )
-                    IconButton(onClick = { readerViewModel.toggleFavorite(false, uriString) }) {
-                        Icon(imageVector = Icons.Default.Delete, contentDescription = "Remove", tint = style.uiOnSurfaceColor)
+                    if (!uiState.decoyModeEnabled) {
+                        IconButton(onClick = { readerViewModel.toggleFavorite(false, uriString) }) {
+                            Icon(imageVector = Icons.Default.Delete, contentDescription = "Remove", tint = style.uiOnSurfaceColor)
+                        }
                     }
                 }
             }

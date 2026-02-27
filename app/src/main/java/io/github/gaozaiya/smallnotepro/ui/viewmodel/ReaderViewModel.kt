@@ -12,6 +12,7 @@ import io.github.gaozaiya.smallnotepro.data.ReaderPreferencesRepository
 import io.github.gaozaiya.smallnotepro.model.ReaderStyle
 import io.github.gaozaiya.smallnotepro.model.TextSpanOverride
 import io.github.gaozaiya.smallnotepro.util.PagedTextFileReader
+import io.github.gaozaiya.smallnotepro.util.PasswordUtils
 import io.github.gaozaiya.smallnotepro.util.TextContentLoader
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
@@ -78,6 +79,17 @@ class ReaderViewModel(
                 hideHintWhenHidden = false,
                 hideStatusBar = false,
                 hideNavigationBar = false,
+                longPressTimeoutMs = 600,
+                revealPasswordHash = null,
+                fakePasswordHash = null,
+                decoyModeEnabled = false,
+                decoyText = "",
+                decoyDisplayName = null,
+                decoyCharsetName = null,
+                decoyHideSettings = false,
+                decoyHidePickFile = false,
+                decoyHideFavoritesList = false,
+                decoyFakeFavorites = emptyList(),
             ),
         )
 
@@ -257,6 +269,17 @@ class ReaderViewModel(
                 hideHintWhenHidden = false,
                 hideStatusBar = false,
                 hideNavigationBar = false,
+                longPressTimeoutMs = 600,
+                revealPasswordHash = null,
+                fakePasswordHash = null,
+                decoyModeEnabled = false,
+                decoyText = "",
+                decoyDisplayName = null,
+                decoyCharsetName = null,
+                decoyHideSettings = false,
+                decoyHidePickFile = false,
+                decoyHideFavoritesList = false,
+                decoyFakeFavorites = emptyList(),
             ),
             rawMarkdownEnabled = false,
             progressOffsetChar = 0,
@@ -285,6 +308,17 @@ class ReaderViewModel(
             hideHintWhenHidden = display.prefs.hideHintWhenHidden,
             hideStatusBar = display.prefs.hideStatusBar,
             hideNavigationBar = display.prefs.hideNavigationBar,
+            longPressTimeoutMs = display.prefs.longPressTimeoutMs,
+            revealPasswordHash = display.prefs.revealPasswordHash,
+            fakePasswordHash = display.prefs.fakePasswordHash,
+            decoyModeEnabled = display.prefs.decoyModeEnabled,
+            decoyText = display.prefs.decoyText,
+            decoyDisplayName = display.prefs.decoyDisplayName,
+            decoyCharsetName = display.prefs.decoyCharsetName,
+            decoyHideSettings = display.prefs.decoyHideSettings,
+            decoyHidePickFile = display.prefs.decoyHidePickFile,
+            decoyHideFavoritesList = display.prefs.decoyHideFavoritesList,
+            decoyFakeFavorites = display.prefs.decoyFakeFavorites,
             isTextHidden = display.isTextHidden,
             progressOffsetChar = display.progressOffsetChar,
             bigProgressPageIndex = big.progressPageIndex,
@@ -475,6 +509,103 @@ class ReaderViewModel(
     fun setHideNavigationBar(enabled: Boolean) {
         viewModelScope.launch {
             preferencesRepository.setHideNavigationBar(enabled)
+        }
+    }
+
+    fun setLongPressTimeoutMs(timeoutMs: Int) {
+        viewModelScope.launch {
+            preferencesRepository.setLongPressTimeoutMs(timeoutMs)
+        }
+    }
+
+    fun setRevealPassword(password: String?) {
+        val hash = password?.takeIf { it.isNotBlank() }?.let { PasswordUtils.sha256Hex(it) }
+        viewModelScope.launch {
+            preferencesRepository.setRevealPasswordHash(hash)
+        }
+    }
+
+    fun clearRevealPassword() {
+        viewModelScope.launch {
+            preferencesRepository.setRevealPasswordHash(null)
+        }
+    }
+
+    fun setFakePassword(password: String?) {
+        val hash = password?.takeIf { it.isNotBlank() }?.let { PasswordUtils.sha256Hex(it) }
+        viewModelScope.launch {
+            preferencesRepository.setFakePasswordHash(hash)
+        }
+    }
+
+    fun clearFakePassword() {
+        viewModelScope.launch {
+            preferencesRepository.setFakePasswordHash(null)
+        }
+    }
+
+    fun setDecoyModeEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setDecoyModeEnabled(enabled)
+        }
+    }
+
+    fun setDecoyText(text: String) {
+        viewModelScope.launch {
+            preferencesRepository.setDecoyText(text)
+        }
+    }
+
+    fun setDecoyDisplayName(name: String?) {
+        viewModelScope.launch {
+            preferencesRepository.setDecoyDisplayName(name)
+        }
+    }
+
+    fun setDecoyCharsetName(name: String?) {
+        viewModelScope.launch {
+            preferencesRepository.setDecoyCharsetName(name)
+        }
+    }
+
+    fun setDecoyHideSettings(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setDecoyHideSettings(enabled)
+        }
+    }
+
+    fun setDecoyHidePickFile(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setDecoyHidePickFile(enabled)
+        }
+    }
+
+    fun setDecoyHideFavoritesList(enabled: Boolean) {
+        viewModelScope.launch {
+            preferencesRepository.setDecoyHideFavoritesList(enabled)
+        }
+    }
+
+    fun setDecoyFakeFavorites(raw: String) {
+        viewModelScope.launch {
+            preferencesRepository.setDecoyFakeFavorites(raw)
+        }
+    }
+
+    enum class RevealDecision {
+        Reveal,
+        Decoy,
+        Invalid,
+    }
+
+    fun decideRevealPassword(input: String): RevealDecision {
+        val reveal = uiState.value.revealPasswordHash
+        val fake = uiState.value.fakePasswordHash
+
+        return when (PasswordUtils.decide(input, reveal, fake)) {
+            PasswordUtils.Decision.Reveal -> RevealDecision.Reveal
+            PasswordUtils.Decision.Decoy -> RevealDecision.Decoy
+            PasswordUtils.Decision.Invalid -> RevealDecision.Invalid
         }
     }
 

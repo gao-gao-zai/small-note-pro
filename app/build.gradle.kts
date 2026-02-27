@@ -86,5 +86,7 @@ dependencies {
 
     implementation("org.commonmark:commonmark:0.22.0")
 
+    testImplementation("junit:junit:4.13.2")
+
     debugImplementation("androidx.compose.ui:ui-tooling")
 }

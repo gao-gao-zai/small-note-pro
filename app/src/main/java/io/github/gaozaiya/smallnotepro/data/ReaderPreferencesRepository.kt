@@ -30,6 +30,17 @@ data class ReaderGlobalPreferences(
     val hideHintWhenHidden: Boolean,
     val hideStatusBar: Boolean,
     val hideNavigationBar: Boolean,
+    val longPressTimeoutMs: Int,
+    val revealPasswordHash: String?,
+    val fakePasswordHash: String?,
+    val decoyModeEnabled: Boolean,
+    val decoyText: String,
+    val decoyDisplayName: String?,
+    val decoyCharsetName: String?,
+    val decoyHideSettings: Boolean,
+    val decoyHidePickFile: Boolean,
+    val decoyHideFavoritesList: Boolean,
+    val decoyFakeFavorites: List<String>,
 )
 
 class ReaderPreferencesRepository(
@@ -43,9 +54,27 @@ class ReaderPreferencesRepository(
     private val hideStatusBarKey = booleanPreferencesKey("hide_status_bar")
     private val hideNavigationBarKey = booleanPreferencesKey("hide_navigation_bar")
 
+    private val longPressTimeoutMsKey = intPreferencesKey("long_press_timeout_ms")
+    private val revealPasswordHashKey = stringPreferencesKey("reveal_password_hash")
+    private val fakePasswordHashKey = stringPreferencesKey("fake_password_hash")
+    private val decoyModeEnabledKey = booleanPreferencesKey("decoy_mode_enabled")
+    private val decoyTextKey = stringPreferencesKey("decoy_text")
+    private val decoyDisplayNameKey = stringPreferencesKey("decoy_display_name")
+    private val decoyCharsetNameKey = stringPreferencesKey("decoy_charset_name")
+    private val decoyHideSettingsKey = booleanPreferencesKey("decoy_hide_settings")
+    private val decoyHidePickFileKey = booleanPreferencesKey("decoy_hide_pick_file")
+    private val decoyHideFavoritesListKey = booleanPreferencesKey("decoy_hide_favorites_list")
+    private val decoyFakeFavoritesKey = stringPreferencesKey("decoy_fake_favorites")
+
     private val lastOpenedUriKey = stringPreferencesKey("last_opened_uri")
 
     val globalPreferences: Flow<ReaderGlobalPreferences> = appContext.appDataStore.data.map { preferences ->
+        val decoyFavoritesRaw = preferences[decoyFakeFavoritesKey] ?: ""
+        val decoyFavorites = decoyFavoritesRaw
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+
         ReaderGlobalPreferences(
             showFileName = preferences[showFileNameKey] ?: true,
             showCharset = preferences[showCharsetKey] ?: true,
@@ -54,6 +83,17 @@ class ReaderPreferencesRepository(
             hideHintWhenHidden = preferences[hideHintWhenHiddenKey] ?: false,
             hideStatusBar = preferences[hideStatusBarKey] ?: false,
             hideNavigationBar = preferences[hideNavigationBarKey] ?: false,
+            longPressTimeoutMs = (preferences[longPressTimeoutMsKey] ?: 600).coerceIn(50, 5_000),
+            revealPasswordHash = preferences[revealPasswordHashKey],
+            fakePasswordHash = preferences[fakePasswordHashKey],
+            decoyModeEnabled = preferences[decoyModeEnabledKey] ?: false,
+            decoyText = preferences[decoyTextKey] ?: "",
+            decoyDisplayName = preferences[decoyDisplayNameKey]?.takeIf { it.isNotBlank() },
+            decoyCharsetName = preferences[decoyCharsetNameKey]?.takeIf { it.isNotBlank() },
+            decoyHideSettings = preferences[decoyHideSettingsKey] ?: false,
+            decoyHidePickFile = preferences[decoyHidePickFileKey] ?: false,
+            decoyHideFavoritesList = preferences[decoyHideFavoritesListKey] ?: false,
+            decoyFakeFavorites = decoyFavorites,
         )
     }
 
@@ -128,6 +168,88 @@ class ReaderPreferencesRepository(
     suspend fun setHideNavigationBar(enabled: Boolean) {
         appContext.appDataStore.edit { preferences ->
             preferences[hideNavigationBarKey] = enabled
+        }
+    }
+
+    suspend fun setLongPressTimeoutMs(timeoutMs: Int) {
+        appContext.appDataStore.edit { preferences ->
+            preferences[longPressTimeoutMsKey] = timeoutMs.coerceIn(50, 5_000)
+        }
+    }
+
+    suspend fun setRevealPasswordHash(hash: String?) {
+        appContext.appDataStore.edit { preferences ->
+            if (hash.isNullOrBlank()) {
+                preferences.remove(revealPasswordHashKey)
+            } else {
+                preferences[revealPasswordHashKey] = hash
+            }
+        }
+    }
+
+    suspend fun setFakePasswordHash(hash: String?) {
+        appContext.appDataStore.edit { preferences ->
+            if (hash.isNullOrBlank()) {
+                preferences.remove(fakePasswordHashKey)
+            } else {
+                preferences[fakePasswordHashKey] = hash
+            }
+        }
+    }
+
+    suspend fun setDecoyModeEnabled(enabled: Boolean) {
+        appContext.appDataStore.edit { preferences ->
+            preferences[decoyModeEnabledKey] = enabled
+        }
+    }
+
+    suspend fun setDecoyText(text: String) {
+        appContext.appDataStore.edit { preferences ->
+            preferences[decoyTextKey] = text
+        }
+    }
+
+    suspend fun setDecoyDisplayName(name: String?) {
+        appContext.appDataStore.edit { preferences ->
+            if (name.isNullOrBlank()) {
+                preferences.remove(decoyDisplayNameKey)
+            } else {
+                preferences[decoyDisplayNameKey] = name
+            }
+        }
+    }
+
+    suspend fun setDecoyCharsetName(name: String?) {
+        appContext.appDataStore.edit { preferences ->
+            if (name.isNullOrBlank()) {
+                preferences.remove(decoyCharsetNameKey)
+            } else {
+                preferences[decoyCharsetNameKey] = name
+            }
+        }
+    }
+
+    suspend fun setDecoyHideSettings(enabled: Boolean) {
+        appContext.appDataStore.edit { preferences ->
+            preferences[decoyHideSettingsKey] = enabled
+        }
+    }
+
+    suspend fun setDecoyHidePickFile(enabled: Boolean) {
+        appContext.appDataStore.edit { preferences ->
+            preferences[decoyHidePickFileKey] = enabled
+        }
+    }
+
+    suspend fun setDecoyHideFavoritesList(enabled: Boolean) {
+        appContext.appDataStore.edit { preferences ->
+            preferences[decoyHideFavoritesListKey] = enabled
+        }
+    }
+
+    suspend fun setDecoyFakeFavorites(raw: String) {
+        appContext.appDataStore.edit { preferences ->
+            preferences[decoyFakeFavoritesKey] = raw
         }
     }
 
