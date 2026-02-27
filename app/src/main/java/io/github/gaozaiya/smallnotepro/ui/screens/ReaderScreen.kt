@@ -56,13 +56,15 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.input.pointer.changedToUp
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.TextLayoutResult
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -76,11 +78,14 @@ import io.github.gaozaiya.smallnotepro.ui.components.ColorPicker
 import io.github.gaozaiya.smallnotepro.ui.viewmodel.ReaderViewModel
 import io.github.gaozaiya.smallnotepro.util.ColorUtils
 import io.github.gaozaiya.smallnotepro.util.TextIndexUtils
+import android.os.SystemClock
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.withTimeoutOrNull
 import kotlin.math.roundToInt
 
@@ -100,6 +105,10 @@ fun ReaderScreen(
     readerViewModel: ReaderViewModel,
     onOpenFavorites: () -> Unit,
     onOpenStyleSettings: () -> Unit,
+    interactionEnabled: Boolean = true,
+    applySystemBars: Boolean = true,
+    enableProgressTracking: Boolean = true,
+    applySafeDrawingPadding: Boolean = true,
 ) {
     val uiState by readerViewModel.uiState.collectAsStateWithLifecycle()
 
@@ -131,15 +140,23 @@ fun ReaderScreen(
     var revealPasswordError by rememberSaveable { mutableStateOf<String?>(null) }
 
     val background = uiState.style.backgroundColor
-    val baseTextColor = ColorUtils.applyBrightness(uiState.style.textColor, uiState.style.textBrightness)
+    val baseTextColor = ColorUtils.applyBrightness(
+        uiState.style.textColor.copy(alpha = uiState.style.textAlpha.coerceIn(0f, 1f)),
+        uiState.style.textBrightness,
+    )
 
     val isDecoyMode = uiState.decoyModeEnabled
-    val effectiveContent = if (isDecoyMode) uiState.decoyText else uiState.content
-    val effectiveDisplayName = if (isDecoyMode) uiState.decoyDisplayName else uiState.displayName
-    val effectiveCharsetName = if (isDecoyMode) uiState.decoyCharsetName else uiState.detectedCharsetName
-    val effectiveShowFileName = if (isDecoyMode) !effectiveDisplayName.isNullOrBlank() else uiState.showFileName
-    val effectiveShowCharset = if (isDecoyMode) !effectiveCharsetName.isNullOrBlank() else uiState.showCharset
-    val effectiveErrorMessage = if (isDecoyMode) null else uiState.errorMessage
+
+    val isDecoyFavorite = isDecoyMode && (uiState.currentUri?.toString()?.let { uriString ->
+        uiState.decoyFakeFavorites.contains(uriString)
+    } == true)
+
+    val effectiveContent = if (isDecoyMode && !isDecoyFavorite) uiState.decoyText else uiState.content
+    val effectiveDisplayName = if (isDecoyMode && !isDecoyFavorite) uiState.decoyDisplayName else uiState.displayName
+    val effectiveCharsetName = if (isDecoyMode && !isDecoyFavorite) uiState.decoyCharsetName else uiState.detectedCharsetName
+    val effectiveShowFileName = if (isDecoyMode && !isDecoyFavorite) !effectiveDisplayName.isNullOrBlank() else uiState.showFileName
+    val effectiveShowCharset = if (isDecoyMode && !isDecoyFavorite) !effectiveCharsetName.isNullOrBlank() else uiState.showCharset
+    val effectiveErrorMessage = if (isDecoyMode && !isDecoyFavorite) null else uiState.errorMessage
     val effectiveIsBigFileMode = uiState.isBigFileMode && !isDecoyMode
     val effectiveIsMarkdown = uiState.isMarkdown && !isDecoyMode
 
@@ -155,128 +172,132 @@ fun ReaderScreen(
         derivedStateOf { bigListState.firstVisibleItemIndex }
     }
 
-    LaunchedEffect(uiState.currentUri, uiState.isBigFileMode) {
-        hasRestoredBigProgress = false
-        if (!uiState.isBigFileMode) return@LaunchedEffect
-        if (uiState.bigPageCount <= 0) return@LaunchedEffect
+    if (enableProgressTracking) {
+        LaunchedEffect(uiState.currentUri, uiState.isBigFileMode) {
+            hasRestoredBigProgress = false
+            if (!uiState.isBigFileMode) return@LaunchedEffect
+            if (uiState.bigPageCount <= 0) return@LaunchedEffect
 
-        // 大文件模式下用 LazyColumn 分页渲染；这里先把列表滚到目标页附近，再在下一段根据页内 offset 精确定位。
-        val targetPage = uiState.bigProgressPageIndex.coerceIn(0, uiState.bigPageCount - 1)
-        bigListState.scrollToItem(targetPage)
-    }
-
-    LaunchedEffect(
-        uiState.isBigFileMode,
-        uiState.bigProgressPageIndex,
-        uiState.bigProgressOffsetCharInPage,
-        bigPageLayouts[uiState.bigProgressPageIndex],
-    ) {
-        if (!uiState.isBigFileMode) return@LaunchedEffect
-        if (hasRestoredBigProgress) return@LaunchedEffect
-        if (uiState.bigPageCount <= 0) return@LaunchedEffect
-
-        val pageIndex = uiState.bigProgressPageIndex.coerceIn(0, uiState.bigPageCount - 1)
-        val layout = bigPageLayouts[pageIndex] ?: return@LaunchedEffect
-        if (layout.layoutInput.text.isEmpty()) return@LaunchedEffect
-
-        val targetOffset = uiState.bigProgressOffsetCharInPage.coerceIn(0, layout.layoutInput.text.length)
-        val line = layout.getLineForOffset(targetOffset)
-        val top = layout.getLineTop(line)
-        bigListState.scrollToItem(pageIndex, top.roundToInt().coerceAtLeast(0))
-        hasRestoredBigProgress = true
-    }
-
-    LaunchedEffect(uiState.currentUri, uiState.isBigFileMode, firstVisibleBigPageIndex) {
-        if (!uiState.isBigFileMode) return@LaunchedEffect
-        if (uiState.bigPageCount <= 0) return@LaunchedEffect
-
-        // 预加载当前页附近的页，避免滚动时频繁看到“加载中...”。
-        for (i in (firstVisibleBigPageIndex - 2)..(firstVisibleBigPageIndex + 2)) {
-            readerViewModel.loadBigFilePage(i)
+            // 大文件模式下用 LazyColumn 分页渲染；这里先把列表滚到目标页附近，再在下一段根据页内 offset 精确定位。
+            val targetPage = uiState.bigProgressPageIndex.coerceIn(0, uiState.bigPageCount - 1)
+            bigListState.scrollToItem(targetPage)
         }
-    }
 
-    LaunchedEffect(uiState.currentUri, uiState.isBigFileMode) {
-        if (!uiState.isBigFileMode) return@LaunchedEffect
-        if (uiState.currentUri == null) return@LaunchedEffect
-        if (uiState.bigPageCount <= 0) return@LaunchedEffect
+        LaunchedEffect(
+            uiState.isBigFileMode,
+            uiState.bigProgressPageIndex,
+            uiState.bigProgressOffsetCharInPage,
+            bigPageLayouts[uiState.bigProgressPageIndex],
+        ) {
+            if (!uiState.isBigFileMode) return@LaunchedEffect
+            if (hasRestoredBigProgress) return@LaunchedEffect
+            if (uiState.bigPageCount <= 0) return@LaunchedEffect
 
-        // 大文件模式下不保存“全局字符偏移”（无法一次性得到全文 length），改为保存“页索引 + 页内字符偏移”。
-        snapshotFlow {
-            bigListState.firstVisibleItemIndex to bigListState.firstVisibleItemScrollOffset
+            val pageIndex = uiState.bigProgressPageIndex.coerceIn(0, uiState.bigPageCount - 1)
+            val layout = bigPageLayouts[pageIndex] ?: return@LaunchedEffect
+            if (layout.layoutInput.text.isEmpty()) return@LaunchedEffect
+
+            val targetOffset = uiState.bigProgressOffsetCharInPage.coerceIn(0, layout.layoutInput.text.length)
+            val line = layout.getLineForOffset(targetOffset)
+            val top = layout.getLineTop(line)
+            bigListState.scrollToItem(pageIndex, top.roundToInt().coerceAtLeast(0))
+            hasRestoredBigProgress = true
         }
-            .distinctUntilChanged()
-            .debounce(300)
-            .collectLatest { (pageIndex, scrollOffset) ->
-                val layout = bigPageLayouts[pageIndex] ?: return@collectLatest
-                val offset = layout.getOffsetForPosition(Offset(0f, scrollOffset.toFloat()))
-                val line = layout.getLineForOffset(offset)
-                val lineStart = layout.getLineStart(line)
-                readerViewModel.saveBigFileProgress(pageIndex, lineStart)
+
+        LaunchedEffect(uiState.currentUri, uiState.isBigFileMode, firstVisibleBigPageIndex) {
+            if (!uiState.isBigFileMode) return@LaunchedEffect
+            if (uiState.bigPageCount <= 0) return@LaunchedEffect
+
+            // 预加载当前页附近的页，避免滚动时频繁看到“加载中...”。
+            for (i in (firstVisibleBigPageIndex - 2)..(firstVisibleBigPageIndex + 2)) {
+                readerViewModel.loadBigFilePage(i)
             }
-    }
-
-    SideEffect {
-        val activity = view.context as? Activity ?: return@SideEffect
-        val window = activity.window
-        window.statusBarColor = background.toArgb()
-        window.navigationBarColor = background.toArgb()
-
-        val isLight = background.luminance() > 0.5f
-        val controller = WindowCompat.getInsetsController(window, view)
-        controller.isAppearanceLightStatusBars = isLight
-        controller.isAppearanceLightNavigationBars = isLight
-
-        val compatController = WindowInsetsControllerCompat(window, view)
-        compatController.systemBarsBehavior =
-            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-
-        if (uiState.hideStatusBar) {
-            compatController.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
-        } else {
-            compatController.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
         }
 
-        if (uiState.hideNavigationBar) {
-            compatController.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
-        } else {
-            compatController.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+        LaunchedEffect(uiState.currentUri, uiState.isBigFileMode) {
+            if (!uiState.isBigFileMode) return@LaunchedEffect
+            if (uiState.currentUri == null) return@LaunchedEffect
+            if (uiState.bigPageCount <= 0) return@LaunchedEffect
+
+            // 大文件模式下不保存“全局字符偏移”（无法一次性得到全文 length），改为保存“页索引 + 页内字符偏移”。
+            snapshotFlow {
+                bigListState.firstVisibleItemIndex to bigListState.firstVisibleItemScrollOffset
+            }
+                .distinctUntilChanged()
+                .debounce(300)
+                .collectLatest { (pageIndex, scrollOffset) ->
+                    val layout = bigPageLayouts[pageIndex] ?: return@collectLatest
+                    val offset = layout.getOffsetForPosition(Offset(0f, scrollOffset.toFloat()))
+                    val line = layout.getLineForOffset(offset)
+                    val lineStart = layout.getLineStart(line)
+                    readerViewModel.saveBigFileProgress(pageIndex, lineStart)
+                }
+        }
+
+        LaunchedEffect(uiState.currentUri, uiState.isMarkdown, uiState.progressOffsetChar, textLayoutResult) {
+            if (uiState.isBigFileMode) return@LaunchedEffect
+            if (isDecoyMode) return@LaunchedEffect
+            if (hasRestoredProgress) return@LaunchedEffect
+            val layout = textLayoutResult ?: return@LaunchedEffect
+            if (effectiveContent.isBlank()) return@LaunchedEffect
+
+            val targetOffset = uiState.progressOffsetChar.coerceIn(0, layout.layoutInput.text.length)
+            val line = layout.getLineForOffset(targetOffset)
+            val top = layout.getLineTop(line)
+            scrollState.scrollTo(top.roundToInt().coerceAtLeast(0))
+            hasRestoredProgress = true
+        }
+
+        LaunchedEffect(uiState.currentUri, uiState.isMarkdown, uiState.content, textLayoutResult) {
+            if (uiState.isBigFileMode) return@LaunchedEffect
+            if (isDecoyMode) return@LaunchedEffect
+            if (uiState.currentUri == null) return@LaunchedEffect
+            if (effectiveContent.isBlank()) return@LaunchedEffect
+            val layout = textLayoutResult ?: return@LaunchedEffect
+
+            snapshotFlow { scrollState.value }
+                .distinctUntilChanged()
+                .debounce(300)
+                .map { scrollY ->
+                    val offset = layout.getOffsetForPosition(Offset(0f, scrollY.toFloat()))
+                    val line = layout.getLineForOffset(offset)
+                    layout.getLineStart(line)
+                }
+                .distinctUntilChanged()
+                .collectLatest { offset ->
+                    readerViewModel.saveProgressOffsetChar(offset)
+                }
         }
     }
 
-    LaunchedEffect(uiState.currentUri, uiState.isMarkdown, uiState.progressOffsetChar, textLayoutResult) {
-        if (uiState.isBigFileMode) return@LaunchedEffect
-        if (isDecoyMode) return@LaunchedEffect
-        if (hasRestoredProgress) return@LaunchedEffect
-        val layout = textLayoutResult ?: return@LaunchedEffect
-        if (effectiveContent.isBlank()) return@LaunchedEffect
+    if (applySystemBars) {
+        SideEffect {
+            val activity = view.context as? Activity ?: return@SideEffect
+            val window = activity.window
+            window.statusBarColor = background.toArgb()
+            window.navigationBarColor = background.toArgb()
 
-        val targetOffset = uiState.progressOffsetChar.coerceIn(0, layout.layoutInput.text.length)
-        val line = layout.getLineForOffset(targetOffset)
-        val top = layout.getLineTop(line)
-        scrollState.scrollTo(top.roundToInt().coerceAtLeast(0))
-        hasRestoredProgress = true
-    }
+            val isLight = background.luminance() > 0.5f
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = isLight
+            controller.isAppearanceLightNavigationBars = isLight
 
-    LaunchedEffect(uiState.currentUri, uiState.isMarkdown, uiState.content, textLayoutResult) {
-        if (uiState.isBigFileMode) return@LaunchedEffect
-        if (isDecoyMode) return@LaunchedEffect
-        if (uiState.currentUri == null) return@LaunchedEffect
-        if (effectiveContent.isBlank()) return@LaunchedEffect
-        val layout = textLayoutResult ?: return@LaunchedEffect
+            val compatController = WindowInsetsControllerCompat(window, view)
+            compatController.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
 
-        snapshotFlow { scrollState.value }
-            .distinctUntilChanged()
-            .debounce(300)
-            .map { scrollY ->
-                val offset = layout.getOffsetForPosition(Offset(0f, scrollY.toFloat()))
-                val line = layout.getLineForOffset(offset)
-                layout.getLineStart(line)
+            if (uiState.hideStatusBar) {
+                compatController.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+            } else {
+                compatController.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
             }
-            .distinctUntilChanged()
-            .collectLatest { offset ->
-                readerViewModel.saveProgressOffsetChar(offset)
+
+            if (uiState.hideNavigationBar) {
+                compatController.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+            } else {
+                compatController.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
             }
+        }
     }
 
     val renderedText: AnnotatedString = remember(
@@ -308,7 +329,8 @@ fun ReaderScreen(
                 if (!isDecoyMode) {
                     uiState.spanOverrides.forEach { override ->
                     val spanColor = override.color?.let { c ->
-                        ColorUtils.applyBrightness(c, override.brightness ?: 1f)
+                        val alpha = uiState.style.textAlpha.coerceIn(0f, 1f)
+                        ColorUtils.applyBrightness(c.copy(alpha = (c.alpha * alpha).coerceIn(0f, 1f)), override.brightness ?: 1f)
                     }
 
                     addStyle(
@@ -326,12 +348,14 @@ fun ReaderScreen(
     }
 
     val onTapState = rememberUpdatedState {
+        if (!interactionEnabled) return@rememberUpdatedState
         if (uiState.tapToToggleHidden && !uiState.isTextHidden) {
             readerViewModel.setTextHidden(true)
         }
     }
 
     val onLongPressState = rememberUpdatedState {
+        if (!interactionEnabled) return@rememberUpdatedState
         if (uiState.isTextHidden) {
             val needPassword = !uiState.revealPasswordHash.isNullOrBlank() || !uiState.fakePasswordHash.isNullOrBlank()
             if (needPassword) {
@@ -346,32 +370,67 @@ fun ReaderScreen(
         }
     }
 
+    val touchSlop = LocalViewConfiguration.current.touchSlop
+
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(background)
-            .pointerInput(uiState.longPressTimeoutMs) {
-                awaitEachGesture {
-                    val down = awaitFirstDown(requireUnconsumed = false)
-                    val up = withTimeoutOrNull(uiState.longPressTimeoutMs.toLong()) {
-                        waitForUpOrCancellation()
-                    }
+            .then(
+                if (!interactionEnabled) {
+                    Modifier
+                } else {
+                    Modifier.pointerInput(uiState.longPressTimeoutMs, touchSlop) {
+                        awaitEachGesture {
+                            val down = awaitFirstDown(requireUnconsumed = false)
+                            val pointerId = down.id
+                            val startTime = down.uptimeMillis
+                            val startPos = down.position
+                            val deadline = startTime + uiState.longPressTimeoutMs.toLong()
 
-                    if (up != null) {
-                        onTapState.value()
-                    } else {
-                        onLongPressState.value()
-                        waitForUpOrCancellation()
-                    }
+                            while (true) {
+                                val now = SystemClock.uptimeMillis()
+                                val remaining = deadline - now
+                                val event = if (remaining > 0) {
+                                    withTimeoutOrNull(remaining) {
+                                        awaitPointerEvent()
+                                    }
+                                } else {
+                                    null
+                                }
 
-                    down.consume()
-                }
-            },
+                                if (event == null) {
+                                    onLongPressState.value()
+                                    waitForUpOrCancellation()
+                                    break
+                                }
+                                val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+
+                                if (change.changedToUp()) {
+                                    onTapState.value()
+                                    break
+                                }
+
+                                val distance = (change.position - startPos).getDistance()
+                                if (distance > touchSlop) {
+                                    break
+                                }
+                            }
+                        }
+                    }
+                },
+            ),
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(WindowInsets.safeDrawing.asPaddingValues())
+                .then(
+                    if (applySafeDrawingPadding) {
+                        Modifier.padding(WindowInsets.safeDrawing.asPaddingValues())
+                    } else {
+                        Modifier
+                    },
+                )
                 .padding(8.dp),
         ) {
             if (effectiveShowFileName) {
@@ -403,7 +462,7 @@ fun ReaderScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .verticalScroll(scrollState),
+                        .verticalScroll(scrollState, enabled = interactionEnabled),
                 ) {
                     Text(
                         text = effectiveErrorMessage,
@@ -417,7 +476,7 @@ fun ReaderScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .verticalScroll(scrollState),
+                        .verticalScroll(scrollState, enabled = interactionEnabled),
                 ) {
                     if (!uiState.hideHintWhenHidden) {
                         Box(
@@ -438,6 +497,7 @@ fun ReaderScreen(
             } else if (effectiveIsBigFileMode) {
                 LazyColumn(
                     state = bigListState,
+                    userScrollEnabled = interactionEnabled,
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth(),
@@ -471,7 +531,7 @@ fun ReaderScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .verticalScroll(scrollState),
+                        .verticalScroll(scrollState, enabled = interactionEnabled),
                 ) {
                     Box(
                         modifier = Modifier
@@ -492,7 +552,7 @@ fun ReaderScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .verticalScroll(scrollState),
+                        .verticalScroll(scrollState, enabled = interactionEnabled),
                 ) {
                     Text(
                         text = renderedText,
@@ -504,7 +564,7 @@ fun ReaderScreen(
             }
         }
 
-        if (showMenu) {
+        if (interactionEnabled && showMenu) {
             ReaderMenuSheet(
                 uiState = uiState,
                 onDismiss = { showMenu = false },

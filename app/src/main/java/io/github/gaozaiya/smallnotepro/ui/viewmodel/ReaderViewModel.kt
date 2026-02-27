@@ -528,12 +528,19 @@ class ReaderViewModel(
     fun clearRevealPassword() {
         viewModelScope.launch {
             preferencesRepository.setRevealPasswordHash(null)
+            preferencesRepository.setFakePasswordHash(null)
         }
     }
 
     fun setFakePassword(password: String?) {
         val hash = password?.takeIf { it.isNotBlank() }?.let { PasswordUtils.sha256Hex(it) }
         viewModelScope.launch {
+            if (hash != null) {
+                val prefs = preferencesRepository.globalPreferences.first()
+                if (prefs.revealPasswordHash.isNullOrBlank()) {
+                    return@launch
+                }
+            }
             preferencesRepository.setFakePasswordHash(hash)
         }
     }
@@ -589,6 +596,34 @@ class ReaderViewModel(
     fun setDecoyFakeFavorites(raw: String) {
         viewModelScope.launch {
             preferencesRepository.setDecoyFakeFavorites(raw)
+        }
+    }
+
+    fun addDecoyFakeFavorite(uriString: String) {
+        viewModelScope.launch {
+            val prefs = preferencesRepository.globalPreferences.first()
+            if (prefs.decoyFakeFavorites.contains(uriString)) return@launch
+            val newRaw = (prefs.decoyFakeFavorites + uriString).joinToString("\n")
+            preferencesRepository.setDecoyFakeFavorites(newRaw)
+        }
+    }
+
+    fun removeDecoyFakeFavorite(uriString: String) {
+        viewModelScope.launch {
+            val prefs = preferencesRepository.globalPreferences.first()
+            val newList = prefs.decoyFakeFavorites.filterNot { it == uriString }
+            preferencesRepository.setDecoyFakeFavorites(newList.joinToString("\n"))
+        }
+    }
+
+    fun replaceAllFavorites(raw: String) {
+        val set = raw
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotBlank() }
+            .toSet()
+        viewModelScope.launch {
+            favoritesRepository.replaceAll(set)
         }
     }
 

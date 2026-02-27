@@ -2,6 +2,7 @@ package io.github.gaozaiya.smallnotepro.ui.components
 
 import android.graphics.Color as AndroidColor
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -28,6 +29,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -80,6 +82,8 @@ fun ColorPicker(
     var hexField by remember { mutableStateOf(TextFieldValue(colorToHex(color))) }
     var isHexEditing by remember { mutableStateOf(false) }
 
+    var expanded by rememberSaveable { mutableStateOf(false) }
+
     LaunchedEffect(color.toArgb()) {
         if (!isHexEditing) {
             hexField = TextFieldValue(colorToHex(color))
@@ -91,11 +95,14 @@ fun ColorPicker(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text(text = title, color = labelColor, modifier = Modifier.weight(1f))
+            Text(text = colorToHex(color), color = labelColor)
             Box(
                 modifier = Modifier
                     .size(30.dp)
@@ -104,62 +111,64 @@ fun ColorPicker(
             )
         }
 
-        PresetColorsRow(
-            onPick = onColorChange,
-            contentPadding = PaddingValues(2.dp),
-        )
-
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(220.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            SvPanel(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                hue = hue,
-                saturation = saturation,
-                value = value,
-                onChange = { s, v -> onColorChange(Color.hsv(hue, s, v, color.alpha)) },
+        if (expanded) {
+            PresetColorsRow(
+                onPick = onColorChange,
+                contentPadding = PaddingValues(2.dp),
             )
 
-            HueBar(
+            Row(
                 modifier = Modifier
-                    .width(28.dp)
-                    .fillMaxHeight(),
-                hue = hue,
-                onChange = { h -> onColorChange(Color.hsv(h, saturation, value, color.alpha)) },
+                    .fillMaxWidth()
+                    .height(220.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                SvPanel(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxHeight(),
+                    hue = hue,
+                    saturation = saturation,
+                    value = value,
+                    onChange = { s, v -> onColorChange(Color.hsv(hue, s, v, color.alpha)) },
+                )
+
+                HueBar(
+                    modifier = Modifier
+                        .width(28.dp)
+                        .fillMaxHeight(),
+                    hue = hue,
+                    onChange = { h -> onColorChange(Color.hsv(h, saturation, value, color.alpha)) },
+                )
+            }
+
+            OutlinedTextField(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { isHexEditing = it.isFocused },
+                value = hexField,
+                onValueChange = {
+                    hexField = it
+                    parseHexColor(it.text, fallbackAlpha = color.alpha)?.let(onColorChange)
+                },
+                label = { Text(text = "Hex", color = labelColor) },
+                singleLine = true,
+                colors = OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = accentColor,
+                    focusedLabelColor = accentColor,
+                    cursorColor = accentColor,
+                ),
             )
+
+            RgbaSliders(
+                color = color,
+                labelColor = labelColor,
+                accentColor = accentColor,
+                onColorChange = onColorChange,
+            )
+
+            Spacer(modifier = Modifier.height(4.dp))
         }
-
-        OutlinedTextField(
-            modifier = Modifier
-                .fillMaxWidth()
-                .onFocusChanged { isHexEditing = it.isFocused },
-            value = hexField,
-            onValueChange = {
-                hexField = it
-                parseHexColor(it.text, fallbackAlpha = color.alpha)?.let(onColorChange)
-            },
-            label = { Text(text = "Hex", color = labelColor) },
-            singleLine = true,
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedBorderColor = accentColor,
-                focusedLabelColor = accentColor,
-                cursorColor = accentColor,
-            ),
-        )
-
-        RgbaSliders(
-            color = color,
-            labelColor = labelColor,
-            accentColor = accentColor,
-            onColorChange = onColorChange,
-        )
-
-        Spacer(modifier = Modifier.height(4.dp))
     }
 }
 

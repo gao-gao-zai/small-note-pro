@@ -24,10 +24,14 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.AlertDialog
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -57,6 +61,8 @@ fun FavoritesScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val appContext = remember(context) { context.applicationContext }
     val view = LocalView.current
+
+    var openErrorMessage by rememberSaveable { mutableStateOf<String?>(null) }
 
     SideEffect {
         val activity = view.context as? Activity ?: return@SideEffect
@@ -116,14 +122,10 @@ fun FavoritesScreen(
                 uiState.favorites.toList().sorted()
             }
             items(favorites) { uriString ->
-                val (uri, name) = if (uiState.decoyModeEnabled) {
-                    null to uriString
-                } else {
-                    val u = remember(uriString) { Uri.parse(uriString) }
-                    val n = remember(uriString) {
-                        DocumentFile.fromSingleUri(appContext, u)?.name ?: u.lastPathSegment ?: uriString
-                    }
-                    u to n
+                val uri = remember(uriString) { Uri.parse(uriString) }
+                val doc = remember(uriString) { DocumentFile.fromSingleUri(appContext, uri) }
+                val name = remember(uriString) {
+                    doc?.name ?: uri.lastPathSegment ?: uriString
                 }
 
                 Row(
@@ -132,10 +134,15 @@ fun FavoritesScreen(
                         .background(style.uiSurfaceColor.copy(alpha = 0.65f))
                         .padding(8.dp)
                         .clickable {
-                            if (!uiState.decoyModeEnabled && uri != null) {
-                                readerViewModel.openUri(uri)
-                                onOpenReader()
+                            val exists = doc?.exists() == true
+                            val canRead = doc?.canRead() == true
+                            if (!exists || !canRead) {
+                                openErrorMessage = "文件不存在或无法打开"
+                                return@clickable
                             }
+
+                            readerViewModel.openUri(uri)
+                            onOpenReader()
                         },
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically,
@@ -153,6 +160,22 @@ fun FavoritesScreen(
                     }
                 }
             }
+        }
+
+        if (openErrorMessage != null) {
+            AlertDialog(
+                onDismissRequest = { openErrorMessage = null },
+                containerColor = style.uiSurfaceColor,
+                titleContentColor = style.uiOnSurfaceColor,
+                textContentColor = style.uiOnSurfaceColor,
+                title = { Text(text = "无法打开") },
+                text = { Text(text = openErrorMessage ?: "") },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = { openErrorMessage = null }) {
+                        Text(text = "知道了")
+                    }
+                },
+            )
         }
     }
 }

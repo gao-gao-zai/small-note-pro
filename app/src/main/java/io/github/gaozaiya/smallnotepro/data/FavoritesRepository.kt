@@ -41,4 +41,10 @@ class FavoritesRepository(
             remove(uriString)
         }
     }
+
+    suspend fun replaceAll(uriStrings: Set<String>) {
+        appContext.appDataStore.edit { preferences ->
+            preferences[favoritesKey] = uriStrings
+        }
+    }
 }

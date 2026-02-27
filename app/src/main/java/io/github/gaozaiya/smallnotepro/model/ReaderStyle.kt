@@ -10,6 +10,7 @@ import androidx.compose.ui.graphics.Color
 data class ReaderStyle(
     val backgroundColor: Color = Color(0xFF000000),
     val textColor: Color = Color(0xFFECECEC),
+    val textAlpha: Float = 1f,
     val textBrightness: Float = 1f,
     val fontSizeSp: Float = 16f,
     val uiSurfaceColor: Color = Color(0xFF1B1B1B),
