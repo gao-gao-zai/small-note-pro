@@ -1,5 +1,6 @@
 package io.github.gaozaiya.smallnotepro.ui.screens
 
+import android.app.Activity
 import android.net.Uri
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -17,7 +18,7 @@ import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -25,15 +26,26 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import io.github.gaozaiya.smallnotepro.ui.viewmodel.ReaderViewModel
 
+/**
+ * 收藏列表页面。
+ *
+ * 展示已收藏的文件列表，支持点击打开和删除收藏。
+ */
 @Composable
 fun FavoritesScreen(
     readerViewModel: ReaderViewModel,
@@ -41,13 +53,43 @@ fun FavoritesScreen(
     onOpenReader: () -> Unit,
 ) {
     val uiState by readerViewModel.uiState.collectAsStateWithLifecycle()
+    val style = uiState.style
     val context = androidx.compose.ui.platform.LocalContext.current
     val appContext = remember(context) { context.applicationContext }
+    val view = LocalView.current
+
+    SideEffect {
+        val activity = view.context as? Activity ?: return@SideEffect
+        val window = activity.window
+        window.statusBarColor = style.uiSurfaceColor.toArgb()
+        window.navigationBarColor = style.uiSurfaceColor.toArgb()
+
+        val isLight = style.uiSurfaceColor.luminance() > 0.5f
+        val controller = WindowCompat.getInsetsController(window, view)
+        controller.isAppearanceLightStatusBars = isLight
+        controller.isAppearanceLightNavigationBars = isLight
+
+        val compatController = WindowInsetsControllerCompat(window, view)
+        compatController.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
+        if (uiState.hideStatusBar) {
+            compatController.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        } else {
+            compatController.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        }
+
+        if (uiState.hideNavigationBar) {
+            compatController.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+        } else {
+            compatController.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+        }
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(style.uiSurfaceColor)
             .padding(WindowInsets.safeDrawing.asPaddingValues())
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -58,9 +100,9 @@ fun FavoritesScreen(
             verticalAlignment = Alignment.CenterVertically,
         ) {
             IconButton(onClick = onBack) {
-                Icon(imageVector = Icons.Default.ArrowBack, contentDescription = "Back", tint = Color.White)
+                Icon(imageVector = Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back", tint = style.uiOnSurfaceColor)
             }
-            Text(text = "收藏", color = Color.White, style = MaterialTheme.typography.titleMedium)
+            Text(text = "收藏", color = style.uiOnSurfaceColor, style = MaterialTheme.typography.titleMedium)
             Spacer(modifier = Modifier.height(0.dp))
         }
 
@@ -78,7 +120,7 @@ fun FavoritesScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.12f))
+                        .background(style.uiSurfaceColor.copy(alpha = 0.65f))
                         .padding(8.dp)
                         .clickable {
                             readerViewModel.openUri(uri)
@@ -89,12 +131,12 @@ fun FavoritesScreen(
                 ) {
                     Text(
                         text = name,
-                        color = Color.White,
+                        color = style.uiOnSurfaceColor,
                         modifier = Modifier.weight(1f),
                         maxLines = 2,
                     )
                     IconButton(onClick = { readerViewModel.toggleFavorite(false, uriString) }) {
-                        Icon(imageVector = Icons.Default.Delete, contentDescription = "Remove", tint = Color.White)
+                        Icon(imageVector = Icons.Default.Delete, contentDescription = "Remove", tint = style.uiOnSurfaceColor)
                     }
                 }
             }

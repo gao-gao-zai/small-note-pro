@@ -8,7 +8,20 @@ import java.nio.CharBuffer
 import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 
+/**
+ * 文本内容加载器。
+ *
+ * 负责从文件加载文本内容，自动检测编码格式。
+ * 支持 BOM 检测、多编码候选尝试、文本质量评分等策略。
+ */
 object TextContentLoader {
+    /**
+     * 文本加载结果。
+     *
+     * @property text 加载成功的文本内容，失败时为 null。
+     * @property charsetName 检测到的编码名称。
+     * @property errorMessage 错误信息，成功时为 null。
+     */
     data class Result(
         val text: String?,
         val charsetName: String?,
@@ -17,6 +30,32 @@ object TextContentLoader {
         val isSuccess: Boolean = text != null && errorMessage == null
     }
 
+    /**
+     * 编码检测结果。
+     *
+     * @property charset 检测到的编码，失败时为 null。
+     * @property charsetName 编码名称。
+     * @property errorMessage 错误信息。
+     */
+    data class CharsetDetectResult(
+        val charset: Charset?,
+        val charsetName: String?,
+        val errorMessage: String?,
+    ) {
+        val isSuccess: Boolean = charset != null && errorMessage == null
+    }
+
+    /**
+     * 加载文本文件内容。
+     *
+     * 自动检测编码，优先尝试 BOM 指示的编码，再依次尝试 UTF-8、UTF-16、GB18030 等常见编码。
+     * 通过文本质量评分选择最佳解码结果。
+     *
+     * @param appContext Android 应用上下文。
+     * @param uri 文件 URI。
+     * @param maxBytes 最大读取字节数，超过则返回"文件过大"错误。
+     * @return 加载结果。
+     */
     fun load(appContext: Context, uri: Uri, maxBytes: Int = 1_000_000): Result {
         val read = try {
             readAllBytesCapped(appContext, uri, maxBytes)
@@ -76,6 +115,69 @@ object TextContentLoader {
         return Result(text = decoded, charsetName = charsetName, errorMessage = null)
     }
 
+    /**
+     * 检测文件编码（仅采样，不加载全文）。
+     *
+     * 用于大文件模式，只读取前 [sampleBytes] 字节来推断编码。
+     * 采样越大越准确，但 IO/内存成本也越高。
+     *
+     * @param appContext Android 应用上下文。
+     * @param uri 文件 URI。
+     * @param sampleBytes 采样字节数，默认 256KB。
+     * @return 编码检测结果。
+     */
+    fun detectCharset(appContext: Context, uri: Uri, sampleBytes: Int = 256 * 1024): CharsetDetectResult {
+        // 大文件模式下不能一次性读入全文；这里只采样前 N 字节来推断编码。
+        // 采样越大越准确，但 IO/内存成本也越高。
+        val bytes = try {
+            readSampleBytes(appContext, uri, sampleBytes)
+        } catch (_: Exception) {
+            return CharsetDetectResult(charset = null, charsetName = null, errorMessage = "读取失败")
+        }
+
+        if (bytes.isEmpty()) {
+            return CharsetDetectResult(charset = Charsets.UTF_8, charsetName = Charsets.UTF_8.name(), errorMessage = null)
+        }
+
+        val bom = detectBom(bytes)
+        if (looksBinary(bytes, bom)) {
+            return CharsetDetectResult(charset = null, charsetName = null, errorMessage = "不是纯文本文件")
+        }
+
+        val decodeCandidates = buildList {
+            bom?.let { add(it) }
+            add(Charsets.UTF_8)
+            add(Charsets.UTF_16LE)
+            add(Charsets.UTF_16BE)
+
+            addIfSupported("GB18030")
+            addIfSupported("GBK")
+            addIfSupported("Big5")
+            addIfSupported("Shift_JIS")
+            addIfSupported("EUC-KR")
+        }
+
+        val best = decodeCandidates
+            .distinctBy { it.name() }
+            .mapNotNull { charset ->
+                strictDecode(bytes, charset, bom)?.let { decoded ->
+                    // 复用全文加载时的“文本质量评分”策略（避免误把二进制当文本）。
+                    val score = textQualityScore(decoded)
+                    charset to score
+                }
+            }
+            .maxByOrNull { it.second }
+
+        val charset = best?.first
+        val charsetName = charset?.name()
+
+        if (charset == null) {
+            return CharsetDetectResult(charset = null, charsetName = null, errorMessage = "无法识别文本编码")
+        }
+
+        return CharsetDetectResult(charset = charset, charsetName = charsetName, errorMessage = null)
+    }
+
     private fun buildList(builder: MutableList<Charset>.() -> Unit): List<Charset> {
         val list = mutableListOf<Charset>()
         list.builder()
@@ -114,6 +216,19 @@ object TextContentLoader {
             }
         }
         return ReadResult(bytes = out.toByteArray(), isTruncated = truncated)
+    }
+
+    private fun readSampleBytes(appContext: Context, uri: Uri, maxBytes: Int): ByteArray {
+        val out = ByteArrayOutputStream()
+        appContext.contentResolver.openInputStream(uri)?.use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (out.size() < maxBytes) {
+                val read = input.read(buffer, 0, minOf(buffer.size, maxBytes - out.size()))
+                if (read <= 0) break
+                out.write(buffer, 0, read)
+            }
+        }
+        return out.toByteArray()
     }
 
     private fun looksBinary(bytes: ByteArray, bom: Charset?): Boolean {

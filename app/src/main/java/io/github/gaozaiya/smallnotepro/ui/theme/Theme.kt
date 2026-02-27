@@ -9,6 +9,11 @@ import androidx.compose.ui.platform.LocalConfiguration
 private val LightColors = lightColorScheme()
 private val DarkColors = darkColorScheme()
 
+/**
+ * 应用主题包装器。
+ *
+ * 根据系统深色模式自动切换配色方案。
+ */
 @Composable
 fun SmallNoteProTheme(content: @Composable () -> Unit) {
     val isNight = (LocalConfiguration.current.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK) ==

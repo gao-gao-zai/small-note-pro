@@ -20,9 +20,22 @@ import org.commonmark.node.StrongEmphasis
 import org.commonmark.node.Text
 import org.commonmark.parser.Parser
 
+/**
+ * Markdown 渲染器。
+ *
+ * 将 Markdown 文本转换为 Compose AnnotatedString，支持标题、粗体、斜体、代码、链接等样式。
+ */
 object MarkdownRenderer {
     private val parser: Parser = Parser.builder().build()
 
+    /**
+     * 渲染 Markdown 文本。
+     *
+     * @param markdown Markdown 源文本。
+     * @param baseFontSizeSp 基础字号（sp）。
+     * @param baseColor 基础文字颜色。
+     * @return 带样式的 AnnotatedString。
+     */
     fun render(markdown: String, baseFontSizeSp: Float, baseColor: Color): AnnotatedString {
         val document = parser.parse(markdown)
         return buildAnnotatedString {

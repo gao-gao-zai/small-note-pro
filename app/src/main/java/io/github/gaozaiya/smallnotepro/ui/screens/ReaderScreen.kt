@@ -1,5 +1,6 @@
 package io.github.gaozaiya.smallnotepro.ui.screens
 
+import android.app.Activity
 import android.content.Intent
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -17,49 +18,88 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import io.github.gaozaiya.smallnotepro.markdown.MarkdownRenderer
 import io.github.gaozaiya.smallnotepro.model.ReaderStyle
 import io.github.gaozaiya.smallnotepro.model.TextSpanOverride
+import io.github.gaozaiya.smallnotepro.ui.components.ColorPicker
 import io.github.gaozaiya.smallnotepro.ui.viewmodel.ReaderViewModel
 import io.github.gaozaiya.smallnotepro.util.ColorUtils
 import io.github.gaozaiya.smallnotepro.util.TextIndexUtils
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.FlowPreview
+import kotlin.math.roundToInt
 
+/**
+ * 阅读器主页面。
+ *
+ * 核心功能包括：
+ * - 文本显示（支持普通文本和 Markdown 渲染）
+ * - 大文件分页加载
+ * - 阅读进度保存与恢复
+ * - 长按菜单（文件选择、收藏、样式设置等）
+ * - 局部样式覆盖
+ */
 @Composable
+@OptIn(FlowPreview::class)
 fun ReaderScreen(
     readerViewModel: ReaderViewModel,
     onOpenFavorites: () -> Unit,
+    onOpenStyleSettings: () -> Unit,
 ) {
     val uiState by readerViewModel.uiState.collectAsStateWithLifecycle()
+
+    val view = LocalView.current
 
     val context = androidx.compose.ui.platform.LocalContext.current
     val appContext = remember(context) { context.applicationContext }
@@ -80,38 +120,200 @@ fun ReaderScreen(
 
     var showMenu by rememberSaveable { mutableStateOf(false) }
     var showSpanDialog by rememberSaveable { mutableStateOf(false) }
+    var showEnableMarkdownDialog by rememberSaveable { mutableStateOf(false) }
 
     val background = uiState.style.backgroundColor
     val baseTextColor = ColorUtils.applyBrightness(uiState.style.textColor, uiState.style.textBrightness)
+
+    val scrollState = rememberScrollState()
+    var textLayoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var hasRestoredProgress by remember(uiState.currentUri, uiState.isMarkdown) { mutableStateOf(false) }
+
+    val bigListState = rememberLazyListState()
+    val bigPageLayouts = remember { mutableStateMapOf<Int, TextLayoutResult>() }
+    var hasRestoredBigProgress by remember(uiState.currentUri) { mutableStateOf(false) }
+
+    val firstVisibleBigPageIndex by remember {
+        derivedStateOf { bigListState.firstVisibleItemIndex }
+    }
+
+    LaunchedEffect(uiState.currentUri, uiState.isBigFileMode) {
+        hasRestoredBigProgress = false
+        if (!uiState.isBigFileMode) return@LaunchedEffect
+        if (uiState.bigPageCount <= 0) return@LaunchedEffect
+
+        // 大文件模式下用 LazyColumn 分页渲染；这里先把列表滚到目标页附近，再在下一段根据页内 offset 精确定位。
+        val targetPage = uiState.bigProgressPageIndex.coerceIn(0, uiState.bigPageCount - 1)
+        bigListState.scrollToItem(targetPage)
+    }
+
+    LaunchedEffect(
+        uiState.isBigFileMode,
+        uiState.bigProgressPageIndex,
+        uiState.bigProgressOffsetCharInPage,
+        bigPageLayouts[uiState.bigProgressPageIndex],
+    ) {
+        if (!uiState.isBigFileMode) return@LaunchedEffect
+        if (hasRestoredBigProgress) return@LaunchedEffect
+        if (uiState.bigPageCount <= 0) return@LaunchedEffect
+
+        val pageIndex = uiState.bigProgressPageIndex.coerceIn(0, uiState.bigPageCount - 1)
+        val layout = bigPageLayouts[pageIndex] ?: return@LaunchedEffect
+        if (layout.layoutInput.text.isEmpty()) return@LaunchedEffect
+
+        val targetOffset = uiState.bigProgressOffsetCharInPage.coerceIn(0, layout.layoutInput.text.length)
+        val line = layout.getLineForOffset(targetOffset)
+        val top = layout.getLineTop(line)
+        bigListState.scrollToItem(pageIndex, top.roundToInt().coerceAtLeast(0))
+        hasRestoredBigProgress = true
+    }
+
+    LaunchedEffect(uiState.currentUri, uiState.isBigFileMode, firstVisibleBigPageIndex) {
+        if (!uiState.isBigFileMode) return@LaunchedEffect
+        if (uiState.bigPageCount <= 0) return@LaunchedEffect
+
+        // 预加载当前页附近的页，避免滚动时频繁看到“加载中...”。
+        for (i in (firstVisibleBigPageIndex - 2)..(firstVisibleBigPageIndex + 2)) {
+            readerViewModel.loadBigFilePage(i)
+        }
+    }
+
+    LaunchedEffect(uiState.currentUri, uiState.isBigFileMode) {
+        if (!uiState.isBigFileMode) return@LaunchedEffect
+        if (uiState.currentUri == null) return@LaunchedEffect
+        if (uiState.bigPageCount <= 0) return@LaunchedEffect
+
+        // 大文件模式下不保存“全局字符偏移”（无法一次性得到全文 length），改为保存“页索引 + 页内字符偏移”。
+        snapshotFlow {
+            bigListState.firstVisibleItemIndex to bigListState.firstVisibleItemScrollOffset
+        }
+            .distinctUntilChanged()
+            .debounce(300)
+            .collectLatest { (pageIndex, scrollOffset) ->
+                val layout = bigPageLayouts[pageIndex] ?: return@collectLatest
+                val offset = layout.getOffsetForPosition(Offset(0f, scrollOffset.toFloat()))
+                val line = layout.getLineForOffset(offset)
+                val lineStart = layout.getLineStart(line)
+                readerViewModel.saveBigFileProgress(pageIndex, lineStart)
+            }
+    }
+
+    SideEffect {
+        val activity = view.context as? Activity ?: return@SideEffect
+        val window = activity.window
+        window.statusBarColor = background.toArgb()
+        window.navigationBarColor = background.toArgb()
+
+        val isLight = background.luminance() > 0.5f
+        val controller = WindowCompat.getInsetsController(window, view)
+        controller.isAppearanceLightStatusBars = isLight
+        controller.isAppearanceLightNavigationBars = isLight
+
+        val compatController = WindowInsetsControllerCompat(window, view)
+        compatController.systemBarsBehavior =
+            WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+
+        if (uiState.hideStatusBar) {
+            compatController.hide(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        } else {
+            compatController.show(androidx.core.view.WindowInsetsCompat.Type.statusBars())
+        }
+
+        if (uiState.hideNavigationBar) {
+            compatController.hide(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+        } else {
+            compatController.show(androidx.core.view.WindowInsetsCompat.Type.navigationBars())
+        }
+    }
+
+    LaunchedEffect(uiState.currentUri, uiState.isMarkdown, uiState.progressOffsetChar, textLayoutResult) {
+        if (uiState.isBigFileMode) return@LaunchedEffect
+        if (hasRestoredProgress) return@LaunchedEffect
+        val layout = textLayoutResult ?: return@LaunchedEffect
+        if (uiState.content.isBlank()) return@LaunchedEffect
+
+        val targetOffset = uiState.progressOffsetChar.coerceIn(0, layout.layoutInput.text.length)
+        val line = layout.getLineForOffset(targetOffset)
+        val top = layout.getLineTop(line)
+        scrollState.scrollTo(top.roundToInt().coerceAtLeast(0))
+        hasRestoredProgress = true
+    }
+
+    LaunchedEffect(uiState.currentUri, uiState.isMarkdown, uiState.content, textLayoutResult) {
+        if (uiState.isBigFileMode) return@LaunchedEffect
+        if (uiState.currentUri == null) return@LaunchedEffect
+        if (uiState.content.isBlank()) return@LaunchedEffect
+        val layout = textLayoutResult ?: return@LaunchedEffect
+
+        snapshotFlow { scrollState.value }
+            .distinctUntilChanged()
+            .debounce(300)
+            .map { scrollY ->
+                val offset = layout.getOffsetForPosition(Offset(0f, scrollY.toFloat()))
+                val line = layout.getLineForOffset(offset)
+                layout.getLineStart(line)
+            }
+            .distinctUntilChanged()
+            .collectLatest { offset ->
+                readerViewModel.saveProgressOffsetChar(offset)
+            }
+    }
 
     val renderedText: AnnotatedString = remember(
         uiState.content,
         uiState.style.fontSizeSp,
         baseTextColor,
         uiState.spanOverrides,
+        uiState.isMarkdown,
+        uiState.isBigFileMode,
     ) {
-        val base = buildAnnotatedString {
-            withStyle(SpanStyle(fontSize = uiState.style.fontSizeSp.sp, color = baseTextColor)) {
-                append(uiState.content)
+        if (uiState.isBigFileMode) {
+            AnnotatedString("")
+        } else
+        if (uiState.isMarkdown) {
+            MarkdownRenderer.render(
+                markdown = uiState.content,
+                baseFontSizeSp = uiState.style.fontSizeSp,
+                baseColor = baseTextColor,
+            )
+        } else {
+            val base = buildAnnotatedString {
+                withStyle(SpanStyle(fontSize = uiState.style.fontSizeSp.sp, color = baseTextColor)) {
+                    append(uiState.content)
+                }
+            }
+
+            buildAnnotatedString {
+                append(base)
+                uiState.spanOverrides.forEach { override ->
+                    val spanColor = override.color?.let { c ->
+                        ColorUtils.applyBrightness(c, override.brightness ?: 1f)
+                    }
+
+                    addStyle(
+                        SpanStyle(
+                            fontSize = (override.fontSizeSp ?: uiState.style.fontSizeSp).sp,
+                            color = spanColor ?: Color.Unspecified,
+                        ),
+                        start = override.start,
+                        end = override.end,
+                    )
+                }
             }
         }
+    }
 
-        buildAnnotatedString {
-            append(base)
-            uiState.spanOverrides.forEach { override ->
-                val spanColor = override.color?.let { c ->
-                    ColorUtils.applyBrightness(c, override.brightness ?: 1f)
-                }
+    val onTapState = rememberUpdatedState {
+        if (uiState.tapToToggleHidden && !uiState.isTextHidden) {
+            readerViewModel.setTextHidden(true)
+        }
+    }
 
-                addStyle(
-                    SpanStyle(
-                        fontSize = (override.fontSizeSp ?: uiState.style.fontSizeSp).sp,
-                        color = spanColor ?: Color.Unspecified,
-                    ),
-                    start = override.start,
-                    end = override.end,
-                )
-            }
+    val onLongPressState = rememberUpdatedState {
+        if (uiState.isTextHidden) {
+            readerViewModel.setTextHidden(false)
+        } else {
+            showMenu = true
         }
     }
 
@@ -121,7 +323,8 @@ fun ReaderScreen(
             .background(background)
             .pointerInput(Unit) {
                 detectTapGestures(
-                    onLongPress = { showMenu = true },
+                    onTap = { onTapState.value() },
+                    onLongPress = { onLongPressState.value() },
                 )
             },
     ) {
@@ -131,39 +334,105 @@ fun ReaderScreen(
                 .padding(WindowInsets.safeDrawing.asPaddingValues())
                 .padding(8.dp),
         ) {
-            uiState.displayName?.let { name ->
-                Text(
-                    text = name,
-                    color = baseTextColor,
-                    fontSize = 12.sp,
-                    maxLines = 1,
-                )
-                Spacer(modifier = Modifier.height(6.dp))
+            if (uiState.showFileName) {
+                uiState.displayName?.let { name ->
+                    Text(
+                        text = name,
+                        color = baseTextColor,
+                        fontSize = 12.sp,
+                        maxLines = 1,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
             }
 
-            uiState.detectedCharsetName?.let { charsetName ->
-                Text(
-                    text = charsetName,
-                    color = baseTextColor,
-                    fontSize = 10.sp,
-                    maxLines = 1,
-                )
-                Spacer(modifier = Modifier.height(6.dp))
+            if (uiState.showCharset) {
+                uiState.detectedCharsetName?.let { charsetName ->
+                    Text(
+                        text = charsetName,
+                        color = baseTextColor,
+                        fontSize = 10.sp,
+                        maxLines = 1,
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                }
             }
 
-            Column(
-                modifier = Modifier
-                    .weight(1f)
-                    .fillMaxWidth()
-                    .verticalScroll(rememberScrollState()),
-            ) {
-                if (uiState.errorMessage != null) {
+            if (uiState.errorMessage != null) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState),
+                ) {
                     Text(
                         text = uiState.errorMessage ?: "",
                         color = baseTextColor,
                         fontSize = uiState.style.fontSizeSp.sp,
                     )
-                } else if (uiState.content.isBlank()) {
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+            } else if (uiState.isTextHidden) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState),
+                ) {
+                    if (!uiState.hideHintWhenHidden) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 24.dp),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Text(
+                                text = "长按显示文本",
+                                color = baseTextColor,
+                                fontSize = uiState.style.fontSizeSp.sp,
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+            } else if (uiState.isBigFileMode) {
+                LazyColumn(
+                    state = bigListState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth(),
+                ) {
+                    items(uiState.bigPageCount) { pageIndex ->
+                        val pageText = uiState.bigPages[pageIndex]
+                        if (pageText == null) {
+                            LaunchedEffect(uiState.currentUri, pageIndex) {
+                                readerViewModel.loadBigFilePage(pageIndex)
+                            }
+                            Text(
+                                text = "加载中...",
+                                color = baseTextColor,
+                                fontSize = uiState.style.fontSizeSp.sp,
+                            )
+                        } else {
+                            Text(
+                                text = pageText,
+                                color = baseTextColor,
+                                fontSize = uiState.style.fontSizeSp.sp,
+                                onTextLayout = { layout ->
+                                    bigPageLayouts[pageIndex] = layout
+                                },
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(24.dp))
+                    }
+                }
+            } else if (uiState.content.isBlank()) {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState),
+                ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -176,13 +445,22 @@ fun ReaderScreen(
                             fontSize = uiState.style.fontSizeSp.sp,
                         )
                     }
-                } else {
+                    Spacer(modifier = Modifier.height(24.dp))
+                }
+            } else {
+                Column(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(scrollState),
+                ) {
                     Text(
                         text = renderedText,
                         color = baseTextColor,
+                        onTextLayout = { textLayoutResult = it },
                     )
+                    Spacer(modifier = Modifier.height(24.dp))
                 }
-                Spacer(modifier = Modifier.height(24.dp))
             }
         }
 
@@ -201,19 +479,58 @@ fun ReaderScreen(
                     showMenu = false
                     onOpenFavorites()
                 },
-                onStyleChange = readerViewModel::setStyle,
+                onOpenStyleSettings = {
+                    showMenu = false
+                    onOpenStyleSettings()
+                },
                 onOpenSpanDialog = {
                     showMenu = false
                     showSpanDialog = true
                 },
+                onToggleMarkdown = {
+                    if (uiState.isMarkdown) {
+                        readerViewModel.setMarkdownEnabledForCurrentFile(false)
+                    } else {
+                        if (!uiState.isBigFileMode) {
+                            showEnableMarkdownDialog = true
+                        }
+                    }
+                },
             )
         }
 
-        if (showSpanDialog) {
+        if (showSpanDialog && !uiState.isBigFileMode) {
             SpanOverrideDialog(
                 content = uiState.content,
+                uiStyle = uiState.style,
                 onDismiss = { showSpanDialog = false },
                 onAdd = { readerViewModel.addSpanOverride(it) },
+            )
+        }
+
+        if (showEnableMarkdownDialog) {
+            AlertDialog(
+                onDismissRequest = { showEnableMarkdownDialog = false },
+                containerColor = uiState.style.uiSurfaceColor,
+                titleContentColor = uiState.style.uiOnSurfaceColor,
+                textContentColor = uiState.style.uiOnSurfaceColor,
+                title = { Text(text = "开启 Markdown 渲染") },
+                text = { Text(text = "开启 Markdown 渲染会使局部样式失效") },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            showEnableMarkdownDialog = false
+                            readerViewModel.setMarkdownEnabledForCurrentFile(true)
+                        },
+                    ) {
+                        Text(text = "开启")
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showEnableMarkdownDialog = false }) {
+                        Text(text = "取消")
+                    }
+                },
             )
         }
     }
@@ -227,17 +544,25 @@ private fun ReaderMenuSheet(
     onPickFile: () -> Unit,
     onToggleFavorite: () -> Unit,
     onOpenFavorites: () -> Unit,
-    onStyleChange: (ReaderStyle) -> Unit,
+    onOpenStyleSettings: () -> Unit,
     onOpenSpanDialog: () -> Unit,
+    onToggleMarkdown: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
         confirmValueChange = { it != SheetValue.PartiallyExpanded },
     )
 
+    val buttonColors = ButtonDefaults.buttonColors(
+        containerColor = uiState.style.uiAccentColor,
+        contentColor = uiState.style.uiOnSurfaceColor,
+    )
+
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
+        containerColor = uiState.style.uiSurfaceColor,
+        contentColor = uiState.style.uiOnSurfaceColor,
     ) {
         Column(
             modifier = Modifier
@@ -249,6 +574,7 @@ private fun ReaderMenuSheet(
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onPickFile,
+                colors = buttonColors,
             ) {
                 Text(text = "选择文件")
             }
@@ -257,6 +583,7 @@ private fun ReaderMenuSheet(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onToggleFavorite,
                 enabled = uiState.currentUri != null,
+                colors = buttonColors,
             ) {
                 Text(text = if (uiState.isFavorite) "取消收藏" else "收藏")
             }
@@ -264,6 +591,7 @@ private fun ReaderMenuSheet(
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onOpenFavorites,
+                colors = buttonColors,
             ) {
                 Text(text = "收藏列表")
             }
@@ -271,113 +599,36 @@ private fun ReaderMenuSheet(
             Button(
                 modifier = Modifier.fillMaxWidth(),
                 onClick = onOpenSpanDialog,
-                enabled = uiState.content.isNotBlank(),
+                enabled = uiState.content.isNotBlank() && !uiState.isMarkdown && !uiState.isBigFileMode,
+                colors = buttonColors,
             ) {
                 Text(text = "局部样式")
             }
 
-            ReaderStylePanel(
-                style = uiState.style,
-                onStyleChange = onStyleChange,
-                onOpenSpanDialog = onOpenSpanDialog,
-            )
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onToggleMarkdown,
+                enabled = uiState.currentUri != null && !uiState.isBigFileMode,
+                colors = buttonColors,
+            ) {
+                Text(text = if (uiState.isMarkdown) "关闭 Markdown 渲染" else "开启 Markdown 渲染")
+            }
+
+            Button(
+                modifier = Modifier.fillMaxWidth(),
+                onClick = onOpenStyleSettings,
+                colors = buttonColors,
+            ) {
+                Text(text = "样式设置")
+            }
         }
-    }
-}
-
-@Composable
-private fun ReaderStylePanel(
-    style: ReaderStyle,
-    onStyleChange: (ReaderStyle) -> Unit,
-    onOpenSpanDialog: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
-            .padding(8.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        Text(text = "全局样式", color = MaterialTheme.colorScheme.onSurface)
-
-        ColorSliders(
-            title = "背景色",
-            color = style.backgroundColor,
-            onColorChange = { onStyleChange(style.copy(backgroundColor = it)) },
-        )
-
-        ColorSliders(
-            title = "文字颜色",
-            color = style.textColor,
-            onColorChange = { onStyleChange(style.copy(textColor = it)) },
-        )
-
-        LabeledSlider(
-            title = "文字亮度",
-            value = style.textBrightness,
-            valueRange = 0f..2f,
-            onValueChange = { onStyleChange(style.copy(textBrightness = it)) },
-        )
-
-        LabeledSlider(
-            title = "字号",
-            value = style.fontSizeSp,
-            valueRange = 10f..28f,
-            onValueChange = { onStyleChange(style.copy(fontSizeSp = it)) },
-        )
-
-        Button(onClick = onOpenSpanDialog) {
-            Text(text = "局部样式")
-        }
-    }
-}
-
-@Composable
-private fun LabeledSlider(
-    title: String,
-    value: Float,
-    valueRange: ClosedFloatingPointRange<Float>,
-    onValueChange: (Float) -> Unit,
-) {
-    Column {
-        Text(text = "$title: ${String.format("%.2f", value)}", color = MaterialTheme.colorScheme.onSurface)
-        Slider(value = value, valueRange = valueRange, onValueChange = onValueChange)
-    }
-}
-
-@Composable
-private fun ColorSliders(
-    title: String,
-    color: Color,
-    onColorChange: (Color) -> Unit,
-) {
-    Column {
-        Text(text = title, color = MaterialTheme.colorScheme.onSurface)
-
-        LabeledSlider(
-            title = "R",
-            value = color.red,
-            valueRange = 0f..1f,
-            onValueChange = { onColorChange(Color(it, color.green, color.blue, color.alpha)) },
-        )
-        LabeledSlider(
-            title = "G",
-            value = color.green,
-            valueRange = 0f..1f,
-            onValueChange = { onColorChange(Color(color.red, it, color.blue, color.alpha)) },
-        )
-        LabeledSlider(
-            title = "B",
-            value = color.blue,
-            valueRange = 0f..1f,
-            onValueChange = { onColorChange(Color(color.red, color.green, it, color.alpha)) },
-        )
     }
 }
 
 @Composable
 private fun SpanOverrideDialog(
     content: String,
+    uiStyle: ReaderStyle,
     onDismiss: () -> Unit,
     onAdd: (TextSpanOverride) -> Unit,
 ) {
@@ -388,20 +639,29 @@ private fun SpanOverrideDialog(
     var fontSizeSp by rememberSaveable { mutableFloatStateOf(16f) }
     var brightness by rememberSaveable { mutableFloatStateOf(1f) }
 
-    var colorR by rememberSaveable { mutableFloatStateOf(1f) }
-    var colorG by rememberSaveable { mutableFloatStateOf(1f) }
-    var colorB by rememberSaveable { mutableFloatStateOf(1f) }
+    var spanColor by rememberSaveable { mutableStateOf(Color(1f, 1f, 1f, 1f)) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
+        containerColor = uiStyle.uiSurfaceColor,
+        titleContentColor = uiStyle.uiOnSurfaceColor,
+        textContentColor = uiStyle.uiOnSurfaceColor,
         title = { Text(text = "添加局部样式") },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
                 OutlinedTextField(
                     value = lineNumberText,
                     onValueChange = { lineNumberText = it },
                     label = { Text(text = "行号(1开始，可选)") },
                     singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = uiStyle.uiAccentColor,
+                        focusedLabelColor = uiStyle.uiAccentColor,
+                        cursorColor = uiStyle.uiAccentColor,
+                    ),
                 )
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -411,6 +671,11 @@ private fun SpanOverrideDialog(
                         onValueChange = { startText = it },
                         label = { Text(text = "start") },
                         singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = uiStyle.uiAccentColor,
+                            focusedLabelColor = uiStyle.uiAccentColor,
+                            cursorColor = uiStyle.uiAccentColor,
+                        ),
                     )
                     OutlinedTextField(
                         modifier = Modifier.weight(1f),
@@ -418,6 +683,11 @@ private fun SpanOverrideDialog(
                         onValueChange = { endText = it },
                         label = { Text(text = "end") },
                         singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = uiStyle.uiAccentColor,
+                            focusedLabelColor = uiStyle.uiAccentColor,
+                            cursorColor = uiStyle.uiAccentColor,
+                        ),
                     )
                 }
 
@@ -425,6 +695,8 @@ private fun SpanOverrideDialog(
                     title = "字号",
                     value = fontSizeSp,
                     valueRange = 8f..40f,
+                    labelColor = uiStyle.uiOnSurfaceColor,
+                    accentColor = uiStyle.uiAccentColor,
                     onValueChange = { fontSizeSp = it },
                 )
 
@@ -432,26 +704,17 @@ private fun SpanOverrideDialog(
                     title = "亮度",
                     value = brightness,
                     valueRange = 0f..2f,
+                    labelColor = uiStyle.uiOnSurfaceColor,
+                    accentColor = uiStyle.uiAccentColor,
                     onValueChange = { brightness = it },
                 )
 
-                LabeledSlider(
-                    title = "颜色R",
-                    value = colorR,
-                    valueRange = 0f..1f,
-                    onValueChange = { colorR = it },
-                )
-                LabeledSlider(
-                    title = "颜色G",
-                    value = colorG,
-                    valueRange = 0f..1f,
-                    onValueChange = { colorG = it },
-                )
-                LabeledSlider(
-                    title = "颜色B",
-                    value = colorB,
-                    valueRange = 0f..1f,
-                    onValueChange = { colorB = it },
+                ColorPicker(
+                    title = "颜色",
+                    color = spanColor,
+                    labelColor = uiStyle.uiOnSurfaceColor,
+                    accentColor = uiStyle.uiAccentColor,
+                    onColorChange = { spanColor = it },
                 )
             }
         },
@@ -470,7 +733,7 @@ private fun SpanOverrideDialog(
                             start = start,
                             end = end,
                             fontSizeSp = fontSizeSp,
-                            color = Color(colorR, colorG, colorB, 1f),
+                            color = spanColor,
                             brightness = brightness,
                         ),
                     )
@@ -486,4 +749,27 @@ private fun SpanOverrideDialog(
             }
         },
     )
+}
+
+@Composable
+private fun LabeledSlider(
+    title: String,
+    value: Float,
+    valueRange: ClosedFloatingPointRange<Float>,
+    labelColor: Color,
+    accentColor: Color,
+    onValueChange: (Float) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(text = "$title: ${String.format("%.2f", value)}", color = labelColor)
+        Slider(
+            value = value,
+            valueRange = valueRange,
+            onValueChange = onValueChange,
+            colors = SliderDefaults.colors(
+                thumbColor = accentColor,
+                activeTrackColor = accentColor,
+            ),
+        )
+    }
 }
